@@ -1,0 +1,27 @@
+background:
+  - There might have some PII in the doc.
+
+keys:
+  - FirstName
+  - LastName
+  - FullName
+  - Initials
+  - EmailAddress
+  - PhoneNumber
+  - Address
+  - StreetNumber
+  - StreetName
+  - ZipCode
+  - City
+  - Country
+  - State
+  - PassportNumber
+  - DriverLicense
+  - SocialSecurityNumber
+  - GeneralIDs
+  - CreditCardNumber
+  - BankAccountNumber
+  - Date
+  - DateOfBirth
+  - IPAddress
+  - MACAddress

@@ -1,0 +1,1 @@
+DEFAULT_LLM_MODEL_NAME = 'Zhipu_glm4_flash'

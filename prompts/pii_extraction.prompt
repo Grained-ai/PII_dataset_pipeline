@@ -1,0 +1,24 @@
+# ROLE: You are a professional PII identifier. You will help me mask all the targeted PII entries in my given text.
+
+# BACKGROUND:
+{background_str}
+
+# TASK:
+I will give you a list of target PII classes. You need to mask all contents that fall into these categories and provide me the masked content.
+You will mask PII content with mask such as [FirstName].
+Please return the masked content and your reason.
+Give your answer in JSON form according to the OUTPUT_SCHEMA.
+
+{example_section_str}
+
+# OUTPUT_SCHEMA:
+{format_instruction}
+
+# QUESTION:
+Target PII classes:
+{target_pii_class_string}
+
+Input_text:
+{input_text}
+
+YOUR ANSWER:
