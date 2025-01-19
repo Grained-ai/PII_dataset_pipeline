@@ -5,8 +5,9 @@
 
 # TASK:
 I will give you a list of target PII classes.
-You need to extract ALL PIIs that falls into my target PII classes.
-Think Step by Step.
+You need to mask all contents that fall into these categories and provide me the masked content.
+You will mask PII content with mask such as [FirstName].
+Please return the masked content and your reason. Masked content should be masked input string.
 Give your answer in JSON form according to the OUTPUT_SCHEMA.
 
 {example_section_str}

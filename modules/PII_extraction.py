@@ -1,10 +1,20 @@
 import yaml
 from pathlib import Path
+
+from langchain_core.output_parsers import PydanticOutputParser
 from loguru import logger
 
 from configs.global_params import *
 from langchain_openai import ChatOpenAI
-from langchain.pydantic_v1
+from pydantic import BaseModel, Field
+from typing import List
+
+class PII(BaseModel):
+    pii_content: str = Field(description='Content in the input text that is one of target PII classes.')
+    pii_class: str = Field(description='Corresponding pii class')
+
+class PIIs(BaseModel):
+    piis: List[PII] = Field(description="List of piis and their corresponding class in the given content.")
 
 class PIIExtraction:
     def __init__(self):
@@ -67,13 +77,28 @@ class PIIExtraction:
         extraction_prompt_template_path = Path(__file__).parent.parent/'prompts'/'pii_extraction.prompt'
         with open(extraction_prompt_template_path, 'r', encoding='utf-8') as f:
             template = f.read()
+        target_pii_class_string_part = []
+        for key_detail in keys_details:
+            target_pii_class_string_part.append(f'{key_detail["key_name"]}')
+        parser = PydanticOutputParser(pydantic_object=PIIs)
+        model_instance = self.create_llm_instance()
 
-        prompt = template.format()
+        prompt = template.format(background_str = '\n'.join(background),
+                                 example_section_str = '',
+                                 target_pii_class_string = '\n'.join(target_pii_class_string_part),
+                                 input_text=input_str,
+                                 format_instruction=parser.get_format_instructions())
+        # model_with_structure = model_instance.with_structured_output(MaskedContent)
+        logger.debug(prompt)
+        res_content = model_instance.invoke(prompt)
+        answer = parser.parse(res_content.content)
+        logger.success(answer)
+        return answer
 
     def extract(self, pii_category):
         pass
 
 if __name__ == "__main__":
     ins = PIIExtraction()
-    i = ins.create_llm_instance()
-    print("HERE")
+    ins.extract_unit('general', """COMPLAINT against 515 Restaurant, LLC, Jaybrien Estevez, Jay Grossman, Jessica Lantier, Union Turnpike Restaurant, LLC filing fee $ 405, receipt number ANYEDC-18649758 Was the Disclosure Statement on Civil Cover Sheet completed -NO,, filed by Emmi Liana Koutsidis. (Attachments: # 1 Appendix Document Preservation Hold Notice, # 2 Appendix Notice of Lien and Assignment, # 3 Appendix Anti-Retaliation Notice) (Troy, John) (Entered: 01/09/2025)
+""")
