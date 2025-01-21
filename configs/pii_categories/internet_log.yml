@@ -1,4 +1,19 @@
 background:
-  This is one internet log from production site
+  - This is one internet log from production site
 keys:
-  -
+  - EmailAddress
+  - PhoneNumber
+  - Address
+#  - Country:
+#      key_description: Content that literally represents a country. Ignore already redacted content.
+  - State
+  - OtherIDs:
+      key_description: All sorts of IDs that cannot be classified to other target target keys can be classified here.
+  - CreditCardNumber
+  - BankAccountNumber
+  - Date
+  - DateOfBirth
+  - IPAddress:
+      key_description: An IP address (Internet Protocol address) is a unique string of numbers separated by periods (IPv4) or colons (IPv6) that identifies devices on a network.
+  - MACAddress:
+      key_description: A MAC address (Media Access Control address) is a hardware address that uniquely identifies a device on a local network. It consists of six pairs of hexadecimal digits, separated by colons or hyphens.
