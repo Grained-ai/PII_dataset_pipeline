@@ -157,5 +157,47 @@ if __name__ == "__main__":
     # ins.extract('internet_log',
     #             'Jan 21 03:39:56 PA-3410-01 1,2025/01/21 03:39:55,024109001378,TRAFFIC,drop,2562,2025/01/21 03:39:55,192.168.216.14,192.168.218.10,0.0.0.0,0.0.0.0,intrazone-server-deny,texl-eng\sysadm03,,not-applicable,vsys1,server,server,ae1.2,,Log_Forwarding_Profile,2025/01/21 03:39:55,0,1,55235,137,0,0,0x0,udp,deny,0,0,0,1,2025/01/21 03:39:55,0,any,,7458452573401715049,0x0,192.168.0.0-192.168.255.255,192.168.0.0-192.168.255.255,,1,0,policy-deny,0,0,0,0,,PA-3410-01,from-policy,,,0,,0,,N/A,0,0,0,0,5787f827-ec6d-44c7-9016-4e98cb265b8c,0,0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,2025-01-21T03:39:56.771+08:00,,,unknown,unknown,unknown,1,,,not-applicable,no,no,0',
     #             11)
-    ins.extract('internet_log', '''Jan 21 01:05:45 172.24.238.24 logver=702071577 timestamp=1737421544 devname="FWAWS104" devid="FGVMSLTM22000518" vd="root" date=2025-01-21 time=01:05:44 eventtime=1737392744510872814 tz="+0800" logid="0000000013" type="traffic" subtype="forward" level="notice" srcip=172.24.244.8 srcport=16122 srcintf="gwlb-a" srcintfrole="undefined" dstip=172.24.234.30 dstport=22 dstintf="gwlb-a" dstintfrole="undefined" srccountry="Reserved" dstcountry="Reserved" sessionid=3036557812 proto=6 vrf=20 action="accept" policyid=31575 policytype="security-policy" poluuid="8e67e89a-c77d-51ef-7406-58fa53396484" service="SSH" trandisp="noop" duration=3 sentbyte=2165 rcvdbyte=3129 sentpkt=12 rcvdpkt=13 appcat="unscanned"''',
+    sample = """Parcel Information
+Map Number: 6 00 15700 01 1301 000
+Tax Account ID: 31042
+Location ID/User Account#: 31042
+GIS Coord: E-427570 N-351192
+Property Type: A - Agricultural - Vacant Land
+Deed BVP: /
+Account Type: FARMLAND EASEMENT
+Plat Book: 76 021
+Lot#:
+Acres: 58.40
+Subdivision:
+Total Living Area: 0 SQFT
+Legal Description:
+Total Bedrooms: Full BA: Half BA:
+#1&2-E. R-O-W OF CO. RT. #273, 58.405 A.
+District Information
+Levy Court District: 6TH 
+Fire: 50_F Harrington
+Sewer:
+School District: SC22 LAKE FOREST
+Trash:
+Ambulance: 50_A Harrington
+Light:
+Storm Water Management:
+Tax Ditch: D 062 - HUGHES CROSSROADS
+Owner
+Name:
+SMITH JAMES D. JR.
+Owners Mailing Address:
+1655 ALLEY MILL RD
+CLAYTON, DE 19938
+Location Information
+Location Addresses:
+WHITE MARSH BRANCH RD, HARRINGTON, DE 19952
+Zoning Information
+Zone:
+AP/10 - Agland Preservation Dist
+Assessed Values
+Land :$0
+Buildings:$0
+Total:$0"""
+    ins.extract('general', sample,
                 11)

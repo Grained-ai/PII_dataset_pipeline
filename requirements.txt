@@ -3,3 +3,4 @@ loguru~=0.7.3
 langchain==0.3.14
 langchain-openai==0.3.0
 pydantic~=2.10.5
+Faker
