@@ -19,10 +19,6 @@ Target PII classes:
 Important:
 - The extracted PII classes must from my given Target PII classes.
 - The extracted PII should be the exact string part from given input string.
-
-COMMENTS:
-{comments_str}
-
 # OUTPUT_SCHEMA:
 {format_instruction}
 

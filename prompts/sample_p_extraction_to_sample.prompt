@@ -1,0 +1,67 @@
+# Role
+You are a professional data synthesize helper. You are good at synthesize sample based on given real sample.
+
+# Task
+I will give you my information and one real sample document.
+My information:
+{my_info_string}
+You need to synthesize document based on the given real sample document and my given information.
+Make sure to keep all not related part content and format the same.
+You need to return me both the synthesized content body and information used.
+
+Give your answer in JSON form according to the OUTPUT_SCHEMA.
+
+# OUTPUT_SCHEMA:
+{format_instruction}
+
+# Example:
+Real sample:
+Welcome to buy ticket from Morden.com.
+Happy New year Mr Doglus:
+Here is your receipt:
+Mastercard: 3234
+
+My information:
+Sex: Female
+FirstName: Jillian
+LastName: Maldonado
+MiddleName: Iris
+FullName: Jillian Iris Maldonado
+Initials: J.M
+EmailAddress: jillian.maldonado@icloud.com
+PhoneNumber: 762.456.8633x14472
+Address: 0601 Janet Route, West Heather, Pennsylvania, 09546, United States
+StreetNumber: 0601
+StreetName: Janet Route
+ZipCode: 09546
+City: West Heather
+Country: United States
+State: Pennsylvania
+PassportNumber: 367322841
+DriverLicense: Q7356ZZG5GCM1IC
+SocialSecurityNumber: 200-36-5754
+CreditCardNumber: 8398842107513485
+BankAccountNumber: 974152123231
+Date: 2022-02-05
+DateOfBirth: 1982-06-27
+IPAddress: 10.154.124.148
+MACAddress: 42:23:93:02:dd:ec
+
+Generated Content:
+Welcome to buy ticket from Morden.com.
+Happy New year Ms Maldonado:
+Here is your receipt:
+Mastercard: 3231
+
+Used_information:
+['Maldonado', '3231', 'Ms']
+
+# INPUT:
+Real sample:
+{real_sample_content}
+
+My Information:
+{my_info_string}
+
+Help me fake one sample from the real sample, make sure all important content are replaced and faked.
+YOUR ANSWER:

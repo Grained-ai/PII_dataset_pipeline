@@ -1,5 +1,6 @@
 import json
 import random
+import re
 import time
 
 import yaml
@@ -23,6 +24,13 @@ class PII(BaseModel):
 
 class PIIs(BaseModel):
     piis: List[PII] = Field(description="List of piis and their corresponding class in the given content.")
+
+
+class RecallValidationResult(BaseModel):
+    if_remaining_piis: bool = Field(description='If there are still remaining not masked piis. True means still '
+                                                'remaining. False means already masked all.')
+    comments: str = Field(
+        description="If there are still remaining piis not masked, name them out. If already pii free, return your comment.")
 
 
 class PIIExtraction:
@@ -72,6 +80,7 @@ class PIIExtraction:
         return keys_details, background
 
     def create_llm_instance(self, model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.95):
+        # TODO: Refraction Needed.
         with open(Path(__file__).parent.parent / 'configs' / 'configs.yaml', 'r') as f:
             config = yaml.safe_load(f)
         return ChatOpenAI(temperature=temperature,
@@ -79,7 +88,7 @@ class PIIExtraction:
                           openai_api_key=config['LLM'][model_name]['llm_params']['api_key'],
                           openai_api_base=config['LLM'][model_name]['llm_params']['endpoint'])
 
-    def unit_extract(self, pii_category, input_str):
+    def unit_extract(self, pii_category, input_str, comment=None):
         keys_details, background = self.load_config(pii_category)
         if not keys_details:
             logger.error("Failed to get key definitions.")
@@ -99,9 +108,10 @@ class PIIExtraction:
                                  example_section_str='',
                                  target_pii_class_string='\n'.join(target_pii_class_string_part),
                                  input_text=input_str,
-                                 format_instruction=parser.get_format_instructions())
+                                 format_instruction=parser.get_format_instructions(),
+                                 comments_str='' if not comment else '\n'.join(comment))
         # model_with_structure = model_instance.with_structured_output(MaskedContent)
-        logger.debug(prompt)
+        # logger.debug(prompt)
         res_content = model_instance.invoke(prompt)
         answer = parser.parse(res_content.content)
         logger.success(answer)
@@ -150,6 +160,63 @@ class PIIExtraction:
         logger.success(f"Final extracted PII: {final_results}")
         return final_results
 
+    @staticmethod
+    def mask_piis(input_str, extracted_piis):
+        skipped_piis = []
+        masked_content = input_str
+        for pii in extracted_piis:
+            pii_content = pii['pii_content']
+            if pii_content not in input_str:
+                logger.warning(f'{pii_content} is not in input_str.')
+                skipped_piis.append(pii)
+                continue
+            pii_label = pii['pii_class']
+            logger.debug(f"Previous content: \n{masked_content}")
+            masked_content = re.sub(pii_content, f'[{pii_label}]', masked_content)
+            logger.debug(f"Masked content: \n{masked_content}")
+        return masked_content, skipped_piis
+
+    def validate_recall(self, pii_category, input_str: str, extracted_piis):
+        prompt_path = Path(__file__).parent.parent / 'prompts' / 'pii_extraction_recall_validation.prompt'
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            template = f.read()
+        keys_details, background = self.load_config(pii_category)
+        target_pii_class_string_part = []
+        for key_detail in keys_details:
+            target_pii_class_string_part.append(
+                f'''- {key_detail["key_name"]}: {key_detail["key_description"] if key_detail["key_description"] else f"literal meaning of {key_detail['key_name']}"}''')
+
+        masked_content, skipped_piis = self.mask_piis(input_str, extracted_piis)
+        comments = [f'pii: <{i["pii_content"]}> is  not in input_str' for i in skipped_piis]
+        logger.info(f"Starts to validate if pii contained in \n{masked_content}")
+
+        parser = PydanticOutputParser(pydantic_object=RecallValidationResult)
+        model_instance = self.create_llm_instance()
+        prompt = template.format(format_instruction=parser.get_format_instructions(),
+                                 target_pii_class_string='\n'.join(target_pii_class_string_part),
+                                 masked_document=masked_content)
+        res_content = model_instance.invoke(prompt)
+        answer = parser.parse(res_content.content)
+        comments.append(answer.comments)
+        return answer.if_remaining_piis, comments
+
+    def validate_accuracy(self, input_str, extracted_piis):
+        pass
+
+    def main(self, pii_category, input_str, votes=1):
+        pii_extracted = ins.extract(pii_category, input_str, votes)
+        while 1:
+            logger.info(f"Current PII_extracted [{len(pii_extracted)}]: {pii_extracted}.")
+            have_unmasked_piis, comments = ins.validate_recall(pii_category, input_str, pii_extracted)
+            if not have_unmasked_piis:
+                logger.success(f"<{pii_category}> PII masked thoroughly.")
+                break
+            masked_input, skipped_piis = self.mask_piis(input_str, pii_category)
+            pii_extracted = [i for i in pii_extracted if i not in skipped_piis]
+            logger.info(f"PII extracted [{len(pii_extracted)}] -> {pii_extracted}")
+            new_pii_extracted = self.unit_extract(pii_category, masked_input, comments)
+            pii_extracted = pii_extracted + new_pii_extracted
+        return pii_extracted
 
 if __name__ == "__main__":
     ins = PIIExtraction()
@@ -157,47 +224,51 @@ if __name__ == "__main__":
     # ins.extract('internet_log',
     #             'Jan 21 03:39:56 PA-3410-01 1,2025/01/21 03:39:55,024109001378,TRAFFIC,drop,2562,2025/01/21 03:39:55,192.168.216.14,192.168.218.10,0.0.0.0,0.0.0.0,intrazone-server-deny,texl-eng\sysadm03,,not-applicable,vsys1,server,server,ae1.2,,Log_Forwarding_Profile,2025/01/21 03:39:55,0,1,55235,137,0,0,0x0,udp,deny,0,0,0,1,2025/01/21 03:39:55,0,any,,7458452573401715049,0x0,192.168.0.0-192.168.255.255,192.168.0.0-192.168.255.255,,1,0,policy-deny,0,0,0,0,,PA-3410-01,from-policy,,,0,,0,,N/A,0,0,0,0,5787f827-ec6d-44c7-9016-4e98cb265b8c,0,0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,2025-01-21T03:39:56.771+08:00,,,unknown,unknown,unknown,1,,,not-applicable,no,no,0',
     #             11)
-    sample = """Parcel Information
-Map Number: 6 00 15700 01 1301 000
-Tax Account ID: 31042
-Location ID/User Account#: 31042
-GIS Coord: E-427570 N-351192
-Property Type: A - Agricultural - Vacant Land
-Deed BVP: /
-Account Type: FARMLAND EASEMENT
-Plat Book: 76 021
-Lot#:
-Acres: 58.40
-Subdivision:
-Total Living Area: 0 SQFT
-Legal Description:
-Total Bedrooms: Full BA: Half BA:
-#1&2-E. R-O-W OF CO. RT. #273, 58.405 A.
-District Information
-Levy Court District: 6TH 
-Fire: 50_F Harrington
-Sewer:
-School District: SC22 LAKE FOREST
-Trash:
-Ambulance: 50_A Harrington
-Light:
-Storm Water Management:
-Tax Ditch: D 062 - HUGHES CROSSROADS
-Owner
-Name:
-SMITH JAMES D. JR.
-Owners Mailing Address:
-1655 ALLEY MILL RD
-CLAYTON, DE 19938
-Location Information
-Location Addresses:
-WHITE MARSH BRANCH RD, HARRINGTON, DE 19952
-Zoning Information
-Zone:
-AP/10 - Agland Preservation Dist
-Assessed Values
-Land :$0
-Buildings:$0
-Total:$0"""
-    ins.extract('general', sample,
-                11)
+    sample = """5.0/5.0
+    By Holly on Jan 7, 2025
+    Good clumping, low dust, no odor, NO FRAGRANCE!
+    I've been looking for a new litter, because although it claims to be 99.9% dust free, the one I've been using for a couple of years leaves dust everywhere. Kept using it, because the cats like it, but fed up with the dust and mess. I used to use Tidy Cats a while back, but had switched to a cheaper brand. Took a chance on this and it covers all the bases: it clumps well and is easy to clean, there is truly no extra dust when I pour it and I'm not seeing dust tracked everywhere, odor control is good, and bonus, there is NO FRAGRANCE. I'm really sensitive to perfumes, and there are a lot of good litters that I can't use jut because of the scent. And most importantly, the kitties like it. They have actually refused other brands and litter types before. (I may have spoiled them :-/ ) Happy with this and making the switch back Tidy Cats, the OG.
+    4Likes Report
+
+    1.0/5.0
+    By Lynn on Jan 9, 2025
+    Good luck opening!
+    To say this was a challenge to open is an understatement. After a half hour wrestling with this I opted to use a hammer. I kid you not, nor do I exaggerate. The seriously need to rethink the design on this. Never again! Which brings me to the little. No dust, which is wonderful. However removing the clumps from the pee is not very easy. It's nearly the consistency of cement. I had to purchase a, stainless steel scoop but it was still quite difficult. I only used this for 1 week. I purchased this as well as a bag I have opted to change litter over to another brand . I'm very disappointed in Tidy Cat and won't be recommending it to anyone.
+    2LikesReport
+
+    2.0/5.0
+    By Katie on Jan 14, 2025
+    Litter everywhere
+    This isn't the first time I ordered one of these pails and had it delivered with litter strewn all over the box... but this was probably the worst. I always fear this ordering the pails for shipping, and everytime it happens I go back to buying them in store, until I can't make it in and use chewy. Just to regret it everytime. Order bags or the clear plastic totes for possibly better luck, otherwise just buy somewhere in store yourself.
+
+    1LikeReport
+
+    5.0/5.0
+    By JaeBird on Jan 19, 2025
+    Odor control
+    I'd been using another, slightly cheaper brand in the litter robot for a few years. Tidy cats works so much better! Much less dust also. Love the refill bag(only have found at Chewy) - although the price difference is disappointingly negligible. Will go back to buckets when I have more room as cleaned out they are great for storage. Also love that I can dictate to FedEx to leave it at my front door so I don't have to carry it up stairs.
+    0LikesReport
+
+    1.0/5.0
+    By Daniel on Jan 6, 2025
+    Bad delivery
+    The delivery person left both 38 lb. packages at the wrong address. As someone who has a number of physical issues, ie; 67 years old, broken kneee, broken ankle, bad hip and back, I rely on the heavy packages being delivered properly. Climbing up and down 3 flights of stairs several times to collect these packages causes me severe physical pain. This is not the first time this has happened and I've raised the concern. If it happens once more, I'll take my thousands of dollars of annual business somewhere else. Someone please school your delivery company.
+    0LikesReport
+
+    1.0/5.0
+    By Marty on Jan 3, 2025
+    Used this brans for years, UNCENTED was Great BUT CAUSED HEALTH PROBLEMS!
+    After years of use my cat started have health problems! SHe would throw up gray matter like a cement looking substance. Spent lots of money and changed foods and such. Finally, the VET after checking the substance found that it was FROM THE CAT LITTER, and it was setting up in her digestive track and hardening! We switched to tree shavings, and she quit throwing up, but it was too late for her digestive track, she went for over a month without pooping and quit eating and drinking along the way. The vet didn't help and she suffered. The POWDER from the product collects on the paws and they lick it!
+    6LikesReport
+
+    4.0/5.0
+    By Megan on Jan 10, 2025
+    No smell
+    I’ve experimented with numerous cat litters, all in an effort to eliminate that persistent feline odor. With this particular brand, a simple scoop and a modest top-up suffice, and the smell is completely gone. However, it does produce some dust, and the charcoal particles tend to cling to my cats’ fur but since they receive regular baths, this isn’t a major issue. We have 7 cats currently.
+
+    3LikesReport"""
+    # res = ins.extract('general', sample,
+    #             5)
+    ins.main('internet_log',
+             'Jan 21 03:39:56 PA-3410-01 1,2025/01/21 03:39:55,024109001378,TRAFFIC,drop,2562,2025/01/21 03:39:55,192.168.216.14,192.168.218.10,0.0.0.0,0.0.0.0,intrazone-server-deny,texl-eng\sysadm03,,not-applicable,vsys1,server,server,ae1.2,,Log_Forwarding_Profile,2025/01/21 03:39:55,0,1,55235,137,0,0,0x0,udp,deny,0,0,0,1,2025/01/21 03:39:55,0,any,,7458452573401715049,0x0,192.168.0.0-192.168.255.255,192.168.0.0-192.168.255.255,,1,0,policy-deny,0,0,0,0,,PA-3410-01,from-policy,,,0,,0,,N/A,0,0,0,0,5787f827-ec6d-44c7-9016-4e98cb265b8c,0,0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,2025-01-21T03:39:56.771+08:00,,,unknown,unknown,unknown,1,,,not-applicable,no,no,0',
+             5)
