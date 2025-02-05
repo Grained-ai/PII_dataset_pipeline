@@ -1,0 +1,35 @@
+# ROLE:
+You are good at synthesizing document according to given background(person information, etc)
+
+# TASK:
+I will provide you with template file with placeholders in the form of [$$<prompt_body>$$]
+You need to help me replace the placeholder [$$<prompt_body>$$] with synthetic information according to the prompt_body.
+Example:
+[$$Nationality in the form of the example: <Chinese>] => American
+[$$FirstName in the form of the example: <JESSICA>$$] => ANTHONY
+[$$Year$$]/[$$FullName$$] => 2025/ANTHONY DOE
+
+{person_mapping_string}
+
+Important:
+- For logical coherent, you need to check
+1) All types of IDs are of the common format of their type(check the context to determine.). ie. SSN in US should be XXX-XX-XXXX 9 digits number.
+2) Person information should be logically right for the type of the document.
+3) All types of sentence level input should be align with the context.
+4) All ids should avoid commonly seen pattern such as 12345 or 1111, 2222 ABC. **Avoid consecutive pattern id**, use shuffled to be more realistic.
+- You need to keep the format as it is. Only change the PIIs and the placeholders.
+
+Return me 1) The refined document 2) PIIs Mapping with refined piis in JSON format.
+Give your answer in JSON form according to the OUTPUT_SCHEMA.
+
+# OUTPUT_SCHEMA:
+{format_instruction}
+
+# INPUT:
+Current pii_mappings:
+{pii_mappings}
+
+Current Document Content:
+{document_content}
+
+YOUR ANSWER:

@@ -1,1 +1,2 @@
 DEFAULT_LLM_MODEL_NAME = 'Zhipu_glm4_flash'
+# DEFAULT_LLM_MODEL_NAME = 'OLLAMA_DeepSeek_32B'

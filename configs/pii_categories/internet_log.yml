@@ -4,15 +4,26 @@ keys:
   - EmailAddress
   - PhoneNumber
   - Address
-#  - Country:
-#      key_description: Content that literally represents a country. Ignore already redacted content.
+  #  - Country:
+  #      key_description: Content that literally represents a country. Ignore already redacted content.
   - State
-  - OtherIDs:
-      key_description: All sorts of IDs that cannot be classified to other target target keys can be classified here.
+  #  - OtherIDs:
+  #      key_description: All sorts of IDs (uuid, etc.) that cannot be classified to other target target keys can be classified here. ID should be longer than 3 digits
+  - UUID/GUID:
+      match_regex:
+        - '[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}'
+  - Location:
+      key_description:
+        - including all types of info that can reveal location such as coordination, latitude longitude.
   - CreditCardNumber
   - BankAccountNumber
+  - UserName
   - Date
   - DateOfBirth
+  - Timestamps:
+      key_description: Timestamps involves all types of expressions containing Year, Month, Date, Time, Timezone. Any expressions that involves Year Date Time count as Timestamps. Examples：Jan 21 03:39:56、2025/01/21 03:39:55、2025-01-21T03:39:56.771+08:00etc.
+      match_regex:
+        - '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}'
   - IPAddress:
       key_description: An IP address (Internet Protocol address) is a unique string of numbers separated by periods (IPv4) or colons (IPv6) that identifies devices on a network.
   - MACAddress:

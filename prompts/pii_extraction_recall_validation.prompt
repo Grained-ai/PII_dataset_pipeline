@@ -1,13 +1,14 @@
 # Role:
 You are a professional PII extractor
 
-# Task:
-You are going to help me identify if any more targeted PIIs remained in the already PII masked document.
-Return True/False and comments in JSON form.
-Give your answer in JSON form according to the OUTPUT_SCHEMA.
-
 # Target PIIs:
 {target_pii_class_string}
+
+# Task:
+You are going to help me identify if any more above listed targeted PIIs can be extracted You are going to help me identify if any more above listed targeted PIIs can be extracted from from the **remaining content**.
+Please thoroughly understand the description of each pii_class and check one by one if any can be extracted from the **remaining content**.
+Return True/False and comments in JSON form.
+Give your answer in JSON form according to the OUTPUT_SCHEMA.
 
 # OUTPUT_SCHEMA:
 {format_instruction}
