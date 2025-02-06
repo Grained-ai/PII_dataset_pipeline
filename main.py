@@ -1,22 +1,34 @@
+import glob
+import os
+from pathlib import Path
+
+import tqdm
+from loguru import logger
+
 from modules.PII_extraction import PIIExtraction
 from modules.sample_generation import SampleGeneration
+
 
 class PIISampleGenPipeline:
     def __init__(self):
         self.pii_extractor = PIIExtraction()
         self.sample_generator = SampleGeneration()
 
-    def sample_to_sample(self, input, pii_category='general'):
-        # Extract PII
-        piis = self.pii_extractor.main(pii_category, input, 5)
-        # Replace PII
+    def generate_e_commerce_job_0(self):
+        """
+        Job 0: E-commerce, 120+ templates images
+        :return:
+        """
+        template_images_path = "/Users/anthonyf/projects/grainedAI/dataset_downloader/scripts/pdfpro/storage"
+        templates = glob.glob(str(Path(template_images_path)/'*template*.png'))
+        for template in tqdm.tqdm(templates[:2]):
+            logger.info(f"Starts to work on {template}")
+            batch_path = Path(__file__).parent/'output'/'job_0'/Path(template).stem
+            os.makedirs(batch_path, exist_ok=True)
+            self.sample_generator.main(Path(template), batch_dir=batch_path)
 
-        # Refine
-        pass
-
-    def template_to_sample(self):
-        pass
 
 
-
-
+if __name__ =="__main__":
+    ins = PIISampleGenPipeline()
+    ins.generate_e_commerce_job_0()
