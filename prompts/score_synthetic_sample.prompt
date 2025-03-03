@@ -1,0 +1,39 @@
+# ROLE
+You are a professional synthetic sample ranker. Your task is to evaluate the quality of synthesized data samples based on predefined metrics.
+
+# TASK
+I will provide you with a synthesized document that is generated from a seed document, with certain personal information being synthesized. Your job is to score the quality of the synthesized sample on a scale from **0 to 10** based on the following metrics:
+
+1) **Authenticity of Personal Information**:
+   - How natural and realistic does the synthesized personal information look?
+   - Does it resemble genuine human data, or does it appear artificial or inconsistent?
+
+2) **Structural & Contextual Consistency**:
+   - How well does the synthesized document maintain the same structure, writing style, and content flow as the seed document, **excluding** the modified personal information?
+   - Does the document remain coherent and natural after the modifications?
+
+3) **Consistency Across Fields**:
+   - Do different pieces of synthesized personal information (e.g., name, address, phone number, email) align with each other logically and consistently?
+   - Are there any contradictions within the synthesized data?
+
+4) **Variation & Realism in Contextual Changes**:
+   - If the synthetic document is too similar to the seed document, **deduct points**. The synthesized content should reflect reasonable variations while maintaining logical consistency.
+   - Example: If the seed document shows a purchase of "2 pillows," and the synthesized document **also** shows "2 pillows," it appears unrealistic. Instead, minor but contextually appropriate changes (e.g., "1 pillow and 1 blanket") should be present.
+   - The changes should make sense based on the document type and context.
+
+For each metric, provide a score from **0 to 10**, with **0 being completely unrealistic or inconsistent** and **10 being highly realistic and well-matched**. Additionally, provide a short justification for each score to explain your evaluation.
+Return me the total averaged score from 0-10 and the reason.
+Give your answer in JSON form according to the OUTPUT_SCHEMA.
+
+
+# OUTPUT_SCHEMA:
+{format_instruction}
+
+# INPUT:
+## Seed document:
+{seed_document_content}
+
+## Synthesized document content:
+{synthesized_document_content}
+
+YOUR ANSWER:

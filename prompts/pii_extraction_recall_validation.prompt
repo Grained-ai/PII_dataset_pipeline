@@ -5,8 +5,11 @@ You are a professional PII extractor
 {target_pii_class_string}
 
 # Task:
-You are going to help me identify if any more above listed targeted PIIs can be extracted You are going to help me identify if any more above listed targeted PIIs can be extracted from from the **remaining content**.
-Please thoroughly understand the description of each pii_class and check one by one if any can be extracted from the **remaining content**.
+You are going to help me identify if any more above listed **unmasked** targeted PIIs can be extracted from from the **remaining content**.
+Please thoroughly understand the description of each pii_class and check one by one if any unmasked PIIs can be extracted from the **remaining content**.
+Already masked content will be represented as [<pii_class>](such as [Address], [OrderNumber], etc.). Skip all those already masked content.
+You only need to check the remaining **unmasked content**.
+
 Return True/False and comments in JSON form.
 Give your answer in JSON form according to the OUTPUT_SCHEMA.
 

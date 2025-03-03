@@ -1,0 +1,32 @@
+background:
+  - There might have some PII in the doc.
+
+keys:
+  - FirstName
+  - LastName
+  - FullName
+  - UserName:
+      key_description: Username included in the content. Usually appears at greeting, form, etc. Example：for <hi Delan,>, UserName exists, extract Delan.
+  - Initials
+  - EmailAddress
+  - PhoneNumber
+  - Address
+  - StreetNumber
+  - StreetName
+  - ZipCode
+  - City
+  - Country
+  - State
+  - PassportNumber
+  - DriverLicense
+  - SocialSecurityNumber
+  - GeneralIDs
+  - CreditCardNumber
+  - BankAccountNumber
+  - Date
+  - DateOfBirth
+  - Timestamps:
+      key_description: Timestamps involves all types of expressions containing Year, Month, Date, Time, Timezone. Any expressions that involves Year Date Time count as Timestamps. Examples：Jan 21 03:39:56、2025/01/21 03:39:55、2025-01-21T03:39:56.771+08:00etc.
+      match_regex:
+        - '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}'
+  - OrderNumber
