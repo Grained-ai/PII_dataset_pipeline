@@ -14,49 +14,30 @@ class PersonGenerator:
         # Sex - Randomly assign male or female
         self.Sex = random.choice(['Male', 'Female'])  # Randomly select Male or Female
 
+        self.if_middle_name = random.choice([1, 1, 1, 0, 0])
+
         # Generate names based on Sex
         if self.Sex == 'Male':
             # self.FirstName = random.choice([self.fake.first_name_male(), self.fake.first_name_male_est()])
             self.FirstName = self.fake.first_name_male()
-            self.MiddleName = random.choice([
-                "James", "Henry", "Jude", "Finn", "William", "Jameson", "Miles", "Oscar", "Jude", "Alexander",
-                "Kai", "River", "Elias", "Atlas", "Finnian", "Jude", "Apollo", "Nash", "Leo", "Grey", "Jude",
-                "William", "Elijah", "Rhys", "Bennett", "Beau", "Oliver", "Arthur", "Cole", "Orion", "Maximus",
-                "Jude", "Gray", "Patrick", "Oliver", "Brooks", "Bennett", "Wells", "Reeve", "Rex", "Silas",
-                "Ezra", "Mason", "Atticus", "Elijah", "Beau", "Zane", "Isaac", "Sawyer", "Gideon", "Quinn",
-                "Theo", "Emmett", "Quinn", "Roscoe", "Asher", "Xavier", "Boone", "Gray", "August", "Maxwell",
-                "Luke", "Rowan", "Griffin", "Kit", "Greyson", "Theodore", "Zeke", "Rhett", "Solomon", "Knox",
-                "Beau", "Archer", "Wilder", "Leo", "Jett", "Phoenix", "Cash", "Cruz", "August", "Beckett",
-                "George", "Elias", "Chase", "Montgomery", "Sullivan", "Weston", "Josiah", "Jasper", "Solomon",
-                "Paxton", "Colton", "Justice", "Beck", "Finnick", "Hunter", "Wyatt", "Kai", "Kingston", "Thatcher"
-            ])
 
         else:
             # self.FirstName = random.choice([self.fake.first_name_female(), self.fake.first_name_female_est()])  # Generate female first name
             self.FirstName = self.fake.first_name_female()  # Generate female first name
-            self.MiddleName = random.choice([
-                "Rose", "Grace", "Mae", "Jane", "Elizabeth", "Claire", "Lynn", "Anne", "Hope", "May",
-                "Faith", "Louise", "Kate", "Victoria", "Marie", "Belle", "Rae", "Dawn", "Faye", "Lila",
-                "Ella", "Paige", "Charlotte", "Lou", "Beth", "Mia", "Olivia", "Sophia", "Maeve", "Alice",
-                "Eve", "Sage", "Violet", "Willow", "Ava", "Emma", "Kate", "Ella", "Zoe", "Nora", "Lily",
-                "Grace", "Hazel", "Ruth", "Skye", "Blair", "Amelia", "Piper", "Harper", "Ruby", "Camille",
-                "Luna", "Maggie", "Ivy", "Isla", "Madeline", "Charlotte", "Adeline", "Genevieve", "Juliet",
-                "Isabel", "Lillian", "Marley", "Ariana", "Wren", "Penelope", "Leona", "Seraphina", "Cora",
-                "Camilla", "Vivian", "Madeline", "Evelyn", "Sophie", "Lacey", "Estelle", "Sienna", "Aurora",
-                "Matilda", "Rosemary", "Juliana", "Lydia", "Adele", "Willow", "Athena", "Vera", "Tess",
-                "Harriet", "Mabel", "Blythe", "Josephine", "Charlotte", "Sloane", "Indigo", "Hazel", "Zara",
-                "Clementine", "Coraline", "Amelia", "Blossom", "Marlene", "Camden", "Cleo", "Katherine",
-                "Olive", "Carmen", "Gwendolyn", "Sophie", "Aspen", "Adelaide", "Veda", "Eden", "Marina",
-                "Felicity", "Leila", "Iris", "Vivienne", "Eleanor", "Josephine", "Veronica", "Cora", "Greer",
-                "Avery", "Tatum", "Emery", "Quinn", "Bliss", "Adalyn", "Larkin", "Autumn", "Leah", "Haven"
-            ])
+
+        self.MiddleName = self.generate_middle_name(self.Sex) if self.if_middle_name else None
 
         self.LastName = self.fake.last_name()
+        # self.FullName = random.choice([f"{self.FirstName} {self.LastName}", f"{self.FirstName} {self.LastName}".upper(),
+        #                                f"{self.FirstName}{self.LastName}",
+        #                                f"{self.FirstName} {self.MiddleName} {self.LastName}"])
         self.FullName = random.choice([f"{self.FirstName} {self.LastName}", f"{self.FirstName} {self.LastName}".upper(),
-                                       f"{self.FirstName}{self.LastName}",
-                                       f"{self.FirstName} {self.MiddleName} {self.LastName}"])
+                                       f"{self.FirstName}{self.LastName}"]) if not self.if_middle_name else f"{self.FirstName} {self.MiddleName} {self.LastName}"
+
         self.UserName = self.fake.user_name()
-        self.Initials = ".".join([name[0].upper() for name in [self.FirstName, self.LastName]])
+        self.Initials = ".".join(
+            [name[0].upper() for name in [self.FirstName, self.LastName]]) if not self.if_middle_name else ".".join(
+            [name[0].upper() for name in [self.FirstName, self.MiddleName, self.LastName]])
         self.EmailAddress = self.generate_email()
         self.PhoneNumber = self.fake.phone_number()
 
@@ -88,31 +69,63 @@ class PersonGenerator:
         self.IPAddress = self.fake.ipv4_private()
         self.MACAddress = self.fake.mac_address()
 
+    def generate_middle_name(self, sex):
+        if sex == 'Male':
+            return random.choice([
+                "James", "Henry", "Jude", "Finn", "William", "Jameson", "Miles", "Oscar", "Jude", "Alexander",
+                "Kai", "River", "Elias", "Atlas", "Finnian", "Jude", "Apollo", "Nash", "Leo", "Grey", "Jude",
+                "William", "Elijah", "Rhys", "Bennett", "Beau", "Oliver", "Arthur", "Cole", "Orion", "Maximus",
+                "Jude", "Gray", "Patrick", "Oliver", "Brooks", "Bennett", "Wells", "Reeve", "Rex", "Silas",
+                "Ezra", "Mason", "Atticus", "Elijah", "Beau", "Zane", "Isaac", "Sawyer", "Gideon", "Quinn",
+                "Theo", "Emmett", "Quinn", "Roscoe", "Asher", "Xavier", "Boone", "Gray", "August", "Maxwell",
+                "Luke", "Rowan", "Griffin", "Kit", "Greyson", "Theodore", "Zeke", "Rhett", "Solomon", "Knox",
+                "Beau", "Archer", "Wilder", "Leo", "Jett", "Phoenix", "Cash", "Cruz", "August", "Beckett",
+                "George", "Elias", "Chase", "Montgomery", "Sullivan", "Weston", "Josiah", "Jasper", "Solomon",
+                "Paxton", "Colton", "Justice", "Beck", "Finnick", "Hunter", "Wyatt", "Kai", "Kingston", "Thatcher"
+            ])
+        else:
+            return random.choice([
+                "Rose", "Grace", "Mae", "Jane", "Elizabeth", "Claire", "Lynn", "Anne", "Hope", "May",
+                "Faith", "Louise", "Kate", "Victoria", "Marie", "Belle", "Rae", "Dawn", "Faye", "Lila",
+                "Ella", "Paige", "Charlotte", "Lou", "Beth", "Mia", "Olivia", "Sophia", "Maeve", "Alice",
+                "Eve", "Sage", "Violet", "Willow", "Ava", "Emma", "Kate", "Ella", "Zoe", "Nora", "Lily",
+                "Grace", "Hazel", "Ruth", "Skye", "Blair", "Amelia", "Piper", "Harper", "Ruby", "Camille",
+                "Luna", "Maggie", "Ivy", "Isla", "Madeline", "Charlotte", "Adeline", "Genevieve", "Juliet",
+                "Isabel", "Lillian", "Marley", "Ariana", "Wren", "Penelope", "Leona", "Seraphina", "Cora",
+                "Camilla", "Vivian", "Madeline", "Evelyn", "Sophie", "Lacey", "Estelle", "Sienna", "Aurora",
+                "Matilda", "Rosemary", "Juliana", "Lydia", "Adele", "Willow", "Athena", "Vera", "Tess",
+                "Harriet", "Mabel", "Blythe", "Josephine", "Charlotte", "Sloane", "Indigo", "Hazel", "Zara",
+                "Clementine", "Coraline", "Amelia", "Blossom", "Marlene", "Camden", "Cleo", "Katherine",
+                "Olive", "Carmen", "Gwendolyn", "Sophie", "Aspen", "Adelaide", "Veda", "Eden", "Marina",
+                "Felicity", "Leila", "Iris", "Vivienne", "Eleanor", "Josephine", "Veronica", "Cora", "Greer",
+                "Avery", "Tatum", "Emery", "Quinn", "Bliss", "Adalyn", "Larkin", "Autumn", "Leah", "Haven"
+            ])
+
     def generate_email(self):
         """Generate an email address based on first and last name."""
-        domain = random.choice([self.fake.free_email_domain(),
-                                "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "aol.com",
-                                "protonmail.com", "icloud.com", "mail.com", "yandex.com", "zoho.com",
-                                "gmx.com", "fastmail.com", "tutanota.com", "hushmail.com", "posteo.net",
-                                "live.com", "qq.com", "163.com", "126.com", "sina.com",
-                                "rediffmail.com", "lycos.com", "rocketmail.com", "bellsouth.net", "comcast.net",
-                                "shaw.ca", "sympatico.ca", "btinternet.com", "ntlworld.com", "sky.com",
-                                "verizon.net", "earthlink.net", "cox.net", "me.com", "mac.com",
-                                "att.net", "optonline.net", "charter.net", "frontiernet.net", "roadrunner.com",
-                                "windstream.net", "wowway.com", "embarqmail.com", "kabelmail.de", "t-online.de",
-                                "web.de", "freenet.de", "gmx.de", "bluewin.ch", "wanadoo.fr",
-                                "orange.fr", "laposte.net", "free.fr", "sfr.fr", "neuf.fr",
-                                "alice.it", "libero.it", "virgilio.it", "tin.it", "tiscali.it",
-                                "live.co.uk", "hotmail.co.uk", "yahoo.co.uk", "btinternet.co.uk", "virginmedia.com",
-                                "talktalk.net", "sky.com", "blueyonder.co.uk", "plus.net", "zoho.eu",
-                                "yandex.ru", "rambler.ru", "mail.ru", "bk.ru", "inbox.ru",
-                                "list.ru", "ya.ru", "seznam.cz", "centrum.cz", "volny.cz",
-                                "atlas.cz", "post.cz", "azet.sk", "zoznam.sk", "centrum.sk",
-                                "nate.com", "daum.net", "hanmail.net", "naver.com", "kakao.com",
-                                "mail.ee", "online.ee", "suomi24.fi", "elisa.fi", "kolumbus.fi",
-                                "tele2.se", "comhem.se", "bredband.net", "home.se", "outlook.jp",
-                                "icloud.cn", "21cn.com"
-                                ])
+        domain = random.choice([random.choice([
+            "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "aol.com",
+            "protonmail.com", "icloud.com", "mail.com", "yandex.com", "zoho.com",
+            "gmx.com", "fastmail.com", "tutanota.com", "hushmail.com", "posteo.net",
+            "live.com", "qq.com", "163.com", "126.com", "sina.com",
+            "rediffmail.com", "lycos.com", "rocketmail.com", "bellsouth.net", "comcast.net",
+            "shaw.ca", "sympatico.ca", "btinternet.com", "ntlworld.com", "sky.com",
+            "verizon.net", "earthlink.net", "cox.net", "me.com", "mac.com",
+            "att.net", "optonline.net", "charter.net", "frontiernet.net", "roadrunner.com",
+            "windstream.net", "wowway.com", "embarqmail.com", "kabelmail.de", "t-online.de",
+            "web.de", "freenet.de", "gmx.de", "bluewin.ch", "wanadoo.fr",
+            "orange.fr", "laposte.net", "free.fr", "sfr.fr", "neuf.fr",
+            "alice.it", "libero.it", "virgilio.it", "tin.it", "tiscali.it",
+            "live.co.uk", "hotmail.co.uk", "yahoo.co.uk", "btinternet.co.uk", "virginmedia.com",
+            "talktalk.net", "sky.com", "blueyonder.co.uk", "plus.net", "zoho.eu",
+            "yandex.ru", "rambler.ru", "mail.ru", "bk.ru", "inbox.ru",
+            "list.ru", "ya.ru", "seznam.cz", "centrum.cz", "volny.cz",
+            "atlas.cz", "post.cz", "azet.sk", "zoznam.sk", "centrum.sk",
+            "nate.com", "daum.net", "hanmail.net", "naver.com", "kakao.com",
+            "mail.ee", "online.ee", "suomi24.fi", "elisa.fi", "kolumbus.fi",
+            "tele2.se", "comhem.se", "bredband.net", "home.se", "outlook.jp",
+            "icloud.cn", "21cn.com"]),
+            self.fake.free_email_domain()])
 
         return f"{self.FirstName.lower()}.{self.LastName.lower()}@{domain}"
 
@@ -165,6 +178,12 @@ class PersonGenerator:
             "IPAddress": self.IPAddress,
             "MACAddress": self.MACAddress,
         }
+
+    def summary_serializable(self):
+        out = {}
+        for key, value in self.summary().items():
+            out[key] = str(value)
+        return out
 
     def summary_text(self):
         out = []

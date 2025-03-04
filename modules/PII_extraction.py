@@ -107,7 +107,7 @@ class PIIExtraction:
                         [{'pii_content': i, 'pii_class': key_detail['key_name']} for i in search_res])
 
         parser = PydanticOutputParser(pydantic_object=PIIs)
-        model_instance = self.__llm_factory.create_llm_instance(temperature=round(random.uniform(0.5, 1), 2))
+        model_instance = self.__llm_factory.create_llm_instance(temperature=round(random.uniform(0, 0.5), 2))
 
         prompt = template.format(timestamp=str(time.time()),
                                  background_str='\n'.join(background),
@@ -221,13 +221,19 @@ class PIIExtraction:
         pass
 
     def main(self, pii_category, input_str, votes=1):
+        if not input_str:
+            return []
         pii_extracted = []
         cur_run_pii_extracted = self.extract(pii_category, input_str, votes)
         masked_input = input_str
         # masked_input, skipped_piis = self.mask_piis(input_str, cur_run_pii_extracted)
         while 1:
             logger.info(f"Current RUN PII_extracted [{len(cur_run_pii_extracted)}]: {cur_run_pii_extracted}.")
-            have_unmasked_piis, comments = self.validate_recall(pii_category, masked_input, cur_run_pii_extracted)
+            try:
+                have_unmasked_piis, comments = self.validate_recall(pii_category, masked_input, cur_run_pii_extracted)
+            except Exception as e:
+                logger.error(e)
+                continue
             # Used to filter PIIs
             masked_input, skipped_piis = self.mask_piis(masked_input, cur_run_pii_extracted)
             cur_run_pii_extracted = [i for i in cur_run_pii_extracted if i not in skipped_piis]

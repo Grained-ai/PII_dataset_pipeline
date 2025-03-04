@@ -2,11 +2,14 @@ background:
   - There might have some PII in the doc.
 
 keys:
-  - FirstName
-  - LastName
-  - FullName
+  - FirstName:
+      key_description: "The given name of a person, usually appearing in greetings, forms, or structured name formats. Example: In 'Hello, John!', 'John' is the FirstName."
+  - LastName:
+      key_description: "The surname or family name of a person, typically appearing alongside a first name or in formal contexts. Example: In 'Hello, Mr. John Smith!', 'Smith' is the LastName."
+  - FullName:
+      key_description: "The complete name of a person, usually including both first and last names. Example: In 'John Smith signed the document.', 'John Smith' is the FullName."
   - UserName:
-      key_description: Username included in the content. Usually appears at greeting, form, etc. Example：for <hi Delan,>, UserName exists, extract Delan.
+      key_description: "A username or handle, often used in greetings, forms, or online interactions. It may be a first name, nickname, or custom identifier. Example: In 'Hi Delan,' or 'Welcome back, @Delan99!', 'Delan' and '@Delan99' are UserNames."
   - Initials
   - EmailAddress
   - PhoneNumber

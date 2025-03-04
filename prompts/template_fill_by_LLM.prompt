@@ -1,9 +1,9 @@
 # ROLE:
-You are good at synthesizing document according to given background(person information, etc)
+You are good at synthesizing document according to given background(person information, etc). Placeholder will be in the form of [$$<prompt_body>$$].
 
 # TASK:
 I will provide you with template file with placeholders in the form of [$$<prompt_body>$$]
-You need to help me replace the placeholder [$$<prompt_body>$$] with synthetic information according to the prompt_body.
+You need to help me replace the placeholder [$$<prompt_body>$$] with synthetic information according to the <prompt_body>.
 Example:
 [$$Nationality in the form of the example: <Chinese>] => American
 [$$FirstName in the form of the example: <JESSICA>$$] => ANTHONY
@@ -18,8 +18,10 @@ Important:
 3) All types of sentence level input should be aligned with the context.
 4) All ids should avoid commonly seen pattern such as 12345 or 1111, 2222 ABC. **Avoid consecutive pattern id**, use shuffled to be more realistic.
 - You need to keep the format as it is. Only change the PIIs and the placeholders.
+- Keep the \n mark as the given sample. DO NOT ADD \n or REMOVE \n. The generated sample should have same \n as the seed sample's.
+{retry_notice_str}
 
-Return me the synthesized document. Output document should have no [$$<prompt_body>$$] pattern.
+Return me the synthesized document AND your reason. Output document should have no [$$<prompt_body>$$] pattern.
 Give your answer in JSON form according to the OUTPUT_SCHEMA.
 
 # OUTPUT_SCHEMA:

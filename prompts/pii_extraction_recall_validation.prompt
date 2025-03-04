@@ -10,6 +10,8 @@ Please thoroughly understand the description of each pii_class and check one by 
 Already masked content will be represented as [<pii_class>](such as [Address], [OrderNumber], etc.). Skip all those already masked content.
 You only need to check the remaining **unmasked content**.
 
+Think step by step. First analyze **unmasked content**. Secondly, check if remaining PIIs. If do have remaining PIIs, check if they are masked content format, if they are masked format, ignore. If no remaining PIIs, return False. If still have unmasked PIIs, return True.
+
 Return True/False and comments in JSON form.
 Give your answer in JSON form according to the OUTPUT_SCHEMA.
 
