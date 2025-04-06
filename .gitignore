@@ -161,3 +161,12 @@ cython_debug/
 
 **/*.yaml
 **/.idea
+output/*
+**/*storage
+**/*_outs
+**/*output*
+**/.DS_Store
+**/*.json
+**/*.xlsx
+**/*bak
+**/*demo*

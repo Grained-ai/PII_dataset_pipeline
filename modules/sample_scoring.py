@@ -1,4 +1,7 @@
 from pathlib import Path
+
+from pandas.tseries.holiday import after_nearest_workday
+
 from modules.llm_factory import LLMFactory
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
@@ -30,6 +33,7 @@ class SampleScoring:
         res_content = model_instance.invoke(prompt)
         answer = parser.parse(res_content.content)
         logger.success(answer)
+        return answer.model_dump()
 
 if __name__ == "__main__":
     seed = """Duplicate Invoice

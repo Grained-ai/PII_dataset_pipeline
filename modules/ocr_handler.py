@@ -32,7 +32,7 @@ class OCRHandler:
         img = cv2.cvtColor(np.asarray(out), cv2.COLOR_RGB2BGR)
         return img
 
-    def get_ocr_result(self, img_input, if_debug=True, out_image_dir=None, input_marker=None):
+    def get_ocr_result(self, img_input, if_debug=False, out_image_dir=None, input_marker=None):
         raw_result = None
         if isinstance(img_input, str):
             if img_input in self.__image_ocr_res_cache:
@@ -68,10 +68,10 @@ class OCRHandler:
                 self.__ppeng =  PaddleOCR(use_angle_cls=True, lang='en')
                 raw_result = self.__ppeng.ocr(img=image, cls=False)
 
-        if isinstance(img_input, Path) and str(img_input) not in self.__image_ocr_res_cache and raw_result:
-            self.__image_ocr_res_cache[str(img_input)] = raw_result
-        if input_marker not in self.__image_ocr_res_cache:
-            self.__image_ocr_res_cache[input_marker] = raw_result
+        # if isinstance(img_input, Path) and str(img_input) not in self.__image_ocr_res_cache and raw_result:
+        #     self.__image_ocr_res_cache[str(img_input)] = raw_result
+        # if input_marker not in self.__image_ocr_res_cache:
+        #     self.__image_ocr_res_cache[input_marker] = raw_result
 
         if if_debug:
             if not raw_result[0]:
@@ -413,6 +413,9 @@ class OCRHandler:
                                                  out_image_dir=output_path,
                                                  input_marker=image_hash + str(part_idx))
                 if not raw_result:
+                    continue
+                if not raw_result[0]:
+                    logger.error(raw_result)
                     continue
                 output.extend([i[1][0] for i in raw_result[0]])
             else:

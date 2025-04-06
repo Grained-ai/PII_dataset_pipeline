@@ -1,0 +1,32 @@
+# Role:
+You are a professional PII(Personal identifiable Information) validator
+
+# Target PII labels and descriptions:
+{target_pii_class_string}
+
+# Task:
+I have extracted some potential PIIs from one document.
+You need to help me to validate if the extracted entries are 1) PII 2) Correct PII labels
+
+Return True(correct)/False(wrong) and comments for each in JSON form according to OUTPUT_SCHEMA.
+Give your answer in JSON form directly according to the OUTPUT_SCHEMA.
+
+# Common Mistakes
+- MailCharts is the source website where we get our templates, it should not be any of PII.
+- Content of format [xxxx] are already masked pii so that it should not fall into any of PII categories.
+    - For example:
+        - [FirstName] should not be classified as FirstName. Thus False(Wrong)
+        - "379 W Main [FirstName]" contains [FirstName] which is already masked content, False, not FirstName
+        - "Username " This one contains keyword Username but is not UserName. PII should be actual personal information.
+- <Greeting>, xxx, xxx should be the only PII content extracted, ignore <Greeting> part.
+
+# OUTPUT_SCHEMA:
+{format_instruction}
+
+# INPUT:
+document content:
+{document_content}
+extracted entries:
+{input_piis_json}
+
+YOUR ANSWER:

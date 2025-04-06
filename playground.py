@@ -1,4 +1,5 @@
 from glob import glob
+import PyPDF2
 
 import tqdm
 import shutil
@@ -24,7 +25,28 @@ def relocate_2():
         new_path = Path(target_folder)/new_name
         shutil.copy(im_path, new_path)
 
+def pdf_to_placeholder_template():
+    file_path = Path('/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds10.pdf')
+
+    # 打开PDF文件
+    with open(file_path, 'rb') as file:
+        reader = PyPDF2.PdfReader(file)
+
+        # 获取表单字段
+        fields = reader.get_fields()
+
+        if not fields:
+            print("未找到任何表单字段。")
+            return
+
+        # 输出每个字段的名字
+        for field_name, field in fields.items():
+            print(f"字段名: {field_name}")
+            # 可选：打印更多关于字段的信息
+            print(f"  类型: {field['/FT']}, 值: {field.get('/V', '无')}\n")
+            print(field)
 
 
 if __name__ == "__main__":
-    relocate_2()
+    # relocate_2()
+    pdf_to_placeholder_template()

@@ -1,6 +1,8 @@
 background:
   - There might have some PII in the doc.
-
+  - FullName usually appears near Order details, Shipment details
+  - MailCharts, Mail Charts, Lorem Ipsum are often used as sample name
+  - MailCharts is also always used as sample street name.
 keys:
   - FirstName:
       key_description: "The given name of a person, usually appearing in greetings, forms, or structured name formats. Example: In 'Hello, John!', 'John' is the FirstName."
@@ -8,26 +10,27 @@ keys:
       key_description: "The surname or family name of a person, typically appearing alongside a first name or in formal contexts. Example: In 'Hello, Mr. John Smith!', 'Smith' is the LastName."
   - FullName:
       key_description: "The complete name of a person, usually including both first and last names. Example: In 'John Smith signed the document.', 'John Smith' is the FullName."
-  - UserName:
-      key_description: "A username or handle, often used in greetings, forms, or online interactions. It may be a first name, nickname, or custom identifier. Example: In 'Hi Delan,' or 'Welcome back, @Delan99!', 'Delan' and '@Delan99' are UserNames."
-  - Initials
-  - EmailAddress
+#  - UserName:
+#      key_description: "A username or handle, often used in greetings, forms, or online interactions. It may be a first name, nickname, or custom identifier. Example: In 'Hi Delan,' or 'Welcome back, @Delan99!', 'Delan' and '@Delan99' are UserNames."
+#  - Initials
+#  - EmailAddress
   - PhoneNumber
+#  - Address
   - Address
-  - StreetNumber
-  - StreetName
+#  - StreetDetailPartial
   - ZipCode
   - City
   - Country
   - State
-  - PassportNumber
-  - DriverLicense
-  - SocialSecurityNumber
-  - GeneralIDs
+  - StateAbbreviation
+#  - PassportNumber
+#  - DriverLicense
+#  - SocialSecurityNumber
+#  - GeneralIDs
   - CreditCardNumber
-  - BankAccountNumber
+#  - BankAccountNumber
   - Date
-  - DateOfBirth
+#  - DateOfBirth
   - Timestamps:
       key_description: Timestamps involves all types of expressions containing Year, Month, Date, Time, Timezone. Any expressions that involves Year Date Time count as Timestamps. Examples：Jan 21 03:39:56、2025/01/21 03:39:55、2025-01-21T03:39:56.771+08:00etc.
       match_regex:

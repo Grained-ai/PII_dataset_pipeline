@@ -1,10 +1,18 @@
+import random
+
 import glob
 import json
 import os
-import random
+import shutil
 import time
-import multiprocessing
+import traceback
 
+from typing import List, Union
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import PyPDF2
+import pdfrw
+from pdfrw import PdfReader, PdfWriter
 import tqdm
 
 from modules.pii_generators.person_pii_generator import PersonGenerator
@@ -13,7 +21,7 @@ from modules.PII_extraction import PIIExtraction
 from modules.ocr_handler import OCRHandler
 from loguru import logger
 import re
-
+from langchain.output_parsers import OutputFixingParser
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama
@@ -23,15 +31,12 @@ from configs.global_params import *
 import concurrent.futures
 from pathlib import Path
 import yaml
-from difflib import SequenceMatcher
 from bs4 import BeautifulSoup
 
 
 class RefineResult(BaseModel):
     refined_context: str = Field(
         description='Refined logically coherent Synthetic Content.You need to keep the format as it is')
-    # refined_pii_mapping: dict = Field(description='Refined PII mapping in Dict form.')
-    reason: str = Field(description='Reasons for the result')
 
 
 class SynthesizedSample(BaseModel):
@@ -39,10 +44,52 @@ class SynthesizedSample(BaseModel):
     used_piis: list = Field(description="List of used pii information in the synthesized content")
 
 
+class AlignedGeneratedContent(BaseModel):
+    aligned_generated_content: List[str] = Field(description="The aligned generated content in list of lines")
+
+
+class UnitPlaceholderAnalysis(BaseModel):
+    placeholder_name: str = Field(description='The name of the placeholder')
+    explanation: str = Field(
+        description=' Determine what kind of information from whom should be placed inside each blank. If not provided, provide me one suitable prompt for me to synthesize one based on the context.')
+    criteria: str = Field(
+        description='Summarize what criteria for each blank.')
+
+
+class PlaceholdersAnalysis(BaseModel):
+    placeholders_analysis: List[UnitPlaceholderAnalysis] = Field(
+        description="The placeholder analysis of all blanks(placeholders).")
+    document_analysis: str = Field(
+        description='Describe the purpose of this document. Summarize a background info'
+    )
+    document_person_count: int = Field(
+        description='Number of persons information needed'
+    )
+    document_person_roles: List[str] = Field(
+        description='Roles of the person information needed.'
+    )
+
+
+class UnitPlaceholderContent(BaseModel):
+    placeholder_name: str = Field(description='The name of the placeholder')
+    content: Union[str, bool, None] = Field(
+        description="The content you decide to fill in. Content type should be decided according to the placeholder. '/FT': '/Btn' return bool, '/FT': '/Tx' return string, leave blank return None")
+    reason: str = Field(description="Explanation for how you decide the content.")
+
+
+class PlaceholderContents(BaseModel):
+    filled_contents: List[UnitPlaceholderContent] = Field(description='Content filled in placeholders')
+
+
 class SampleGeneration:
     def __init__(self):
         self.ocr_handler = OCRHandler()
         self.pii_extractor = PIIExtraction()
+        with open(Path(__file__).parent / 'sensitive_keywords.json', 'r') as f:
+            self.sensitive_mapping = json.load(f)
+
+    def replace_sensitive_words(self):
+        pass
 
     @staticmethod
     def create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.95):
@@ -74,32 +121,87 @@ class SampleGeneration:
             if not hasattr(person_ins, placeholder.split('_')[0]):
                 missing_placeholders.append(placeholder)
 
-        # Step 4: Check if each method placeholder has a corresponding method_name> method
-        for method in method_placeholders:
-            method_name = method.split('(')[0]  # Get the method name before the parentheses
-            if not hasattr(DIYPIIGenerator, method_name.upper()):
-                missing_placeholders.append(f"[${{method}}] method missing: {method}")
+        # # Step 4: Check if each method placeholder has a corresponding method_name> method
+        # for method in method_placeholders:
+        #     method_name = method.split('(')[0]  # Get the method name before the parentheses
+        #     if not hasattr(DIYPIIGenerator, method_name.upper()):
+        #         missing_placeholders.append(f"[${{method}}] method missing: {method}")
 
         if missing_placeholders:
             logger.error(f"Missing placeholders or methods: {', '.join(missing_placeholders)}")
             return missing_placeholders
         else:
-            logger.success("All placeholders and methods are valid.")
+            logger.info("All placeholders and methods are valid.")
             return True
 
-    def generate_sample_by_image(self, image_path: Path, batch_dir: Path):
-        lines = self.ocr_handler.get_ocr_result_by_block(image_path, output_path=batch_dir)
-        sample_content = '\n'.join(lines)
-        seed_path = batch_dir / 'seed_content.txt'
-        with open(seed_path, 'w', encoding='utf-8') as f:
-            f.write(sample_content)
-        pii_extracted = self.pii_extractor.main(pii_category='general', input_str=sample_content, votes=5)
-        pre_text, placeholder_maps, person_mapping = self.generate_sample_by_sample_p_extraction(sample_content,
-                                                                                                 pii_extracted)
-        sample_path = batch_dir / 'sample_content.txt'
-        with open(sample_path, 'w', encoding='utf-8') as f:
-            f.write(pre_text)
-        return pre_text, {}, None
+    def generate_sample_by_image(self, pii_category, image_path: Path, batch_dir: Path, sample_count=5,
+                                 template_only=False):
+        sample_name = image_path.name
+        batch_status_paths = glob.glob(str(batch_dir / "batch_status*"))
+        sample_content = None
+        if batch_status_paths:
+            for batch_status_path in batch_status_paths:
+                with open(batch_status_path, 'r') as f:
+                    data = json.load(f)
+                    if data.get('seed_content'):
+                        sample_content = data.get('seed_content')
+                        break
+
+        if not sample_content:
+            lines = self.ocr_handler.get_ocr_result_by_block(image_path, output_path=batch_dir)
+            sample_content = '\n'.join(lines)
+            for k in self.sensitive_mapping:
+                sample_content = sample_content.replace(k, self.sensitive_mapping[k])
+
+        template_path = batch_dir / f'{sample_name}_template.txt'
+        template_elements_path = batch_dir / f'{sample_name}_template_details.json'
+        if template_path.exists() and template_elements_path.exists():
+            logger.warning("Template exists. Will not generate template.")
+            with open(template_path, 'r') as f:
+                template = f.read()
+            with open(template_elements_path, 'r') as f:
+                elements_details = json.load(f)
+            instance_count = elements_details.get('instance_count')
+        else:
+            try:
+                pii_extracted = self.pii_extractor.main(pii_category=pii_category, input_str=sample_content, votes=5)
+                template, instance_count, pii_label_to_pii_content_mapping = self.sample_to_template(sample_content,
+                                                                                                     extracted_piis=pii_extracted)
+                logger.info(f"Generated template is: \n{template}")
+                with open(template_path, 'w') as f:
+                    f.write(template)
+                with open(template_elements_path, 'w') as f:
+                    json.dump({"instance_count": instance_count,
+                               "pii_label_to_pii_content_mapping": pii_label_to_pii_content_mapping}, f, indent=2,
+                              ensure_ascii=False)
+            except Exception as e:
+                logger.error(f"Failed to sample2template. \n{e}")
+                return
+        if template_only:
+            logger.success(f"Template finished at: {template_path}")
+            return {'template_path': template_path,
+                    'pii_category': pii_category,
+                    'batch_dir': batch_dir,
+                    'seed_input': image_path,
+                    'seed_content': sample_content,
+                    'generated_samples': []}
+        generated_samples = []
+        for i in range(sample_count):
+            sample_details = self.generate_sample_by_sample_p_extraction(
+                sample_store_name=f"{sample_name}_{str(int(time.time()))}",
+                template=template,
+                instance_count=instance_count,
+                sample_base_dir=batch_dir)
+            if sample_details:
+                generated_samples.append(sample_details)
+
+        batch_details = {'template_path': template_path,
+                         'pii_category': pii_category,
+                         'batch_dir': batch_dir,
+                         'seed_input': image_path,
+                         'seed_content': sample_content,
+                         'generated_samples': generated_samples}
+        return batch_details
 
     @staticmethod
     def sample_to_template(input_str, extracted_piis):
@@ -113,6 +215,9 @@ class SampleGeneration:
         masked_content = input_str
         # logger.debug(extracted_piis)
         pii_label_to_pii_content_mapping = {}
+
+        extracted_piis.sort(key=lambda x: len(x['pii_content']), reverse=True)
+        logger.debug(extracted_piis)
         for pii in extracted_piis:
             try:
                 pii_content = pii.get('pii_content')
@@ -127,46 +232,457 @@ class SampleGeneration:
             if pii_label not in pii_label_to_pii_content_mapping:
                 pii_label_to_pii_content_mapping[pii_label] = []
             pii_label_to_pii_content_mapping[pii_label].append(pii_content)
-            masked_content = re.sub(rf'\b{re.escape(pii_content)}\b(?![^\[]*\$\$\])',
-                                    f"[$$Reformated Person_{len(pii_label_to_pii_content_mapping[pii_label]) - 1}'s {pii_label} according to the the format of this {pii_label} example: <{pii_content}>.$$]",
-                                    masked_content)
+            if pii_label in ['OrderNumber', 'StreetNumber', 'StreetName', 'PhoneNumber', 'PassportNumber',
+                             'DriverLicense', 'SocialSecurityNumber', 'CreditCardNumber', 'BankAccountNumber', 'Date',
+                             'Timestamps']:
+                unique_flag = True
+            else:
+                unique_flag = False
+            unique_content = "Should be different than the Example" if unique_flag else ""
+            if pii_label in ['OrderNumber']:
+                masked_content = re.sub(rf'\b{re.escape(pii_content)}\b(?![^\[]*\$\$\])',
+                                        f"[$$Synthesize one {pii_label} according to the style of the Example: {pii_content}. PS: Your res {unique_content} $$]",
+                                        masked_content)
+            else:
+                masked_content = re.sub(rf'\b{re.escape(pii_content)}\b(?![^\[]*\$\$\])',
+                                        f"[$$Fill in Person_{len(pii_label_to_pii_content_mapping[pii_label]) - 1}'s {pii_label} according to the style of Example: {pii_content}.{unique_content} $$]",
+                                        masked_content)
         instance_count = max(
             [len(pii_label_to_pii_content_mapping[i]) for i in pii_label_to_pii_content_mapping.keys()])
         return masked_content, instance_count, pii_label_to_pii_content_mapping
+
+    @staticmethod
+    def extract_text_from_pdf(pdf_path, if_ignore_no_placeholder_pages=False):
+        """
+        从给定的PDF文件路径中提取全部文本。
+
+        :param pdf_path: PDF文件的路径。
+        :param if_ignore_no_placeholder_pages: 如果是True，则只返回有placeholder页面的内容，默认为False。
+        :return: PDF文件中的全部文本。
+        """
+        # 打开PDF文件
+        with open(pdf_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+
+            # 初始化一个字符串用于存储所有文本
+            full_text = ""
+
+            # 遍历每一页
+            for page_num in range(len(reader.pages)):
+                page = reader.pages[page_num]
+
+                # 检查页面是否有表单域
+                has_placeholders = len(page['/Annots']) > 0 if '/Annots' in page else False
+
+                # 提取文本
+                page_text = page.extract_text()
+
+                # 根据if_ignore_no_placeholder_pages参数决定是否添加当前页的文本
+                if not if_ignore_no_placeholder_pages or (if_ignore_no_placeholder_pages and has_placeholders):
+                    full_text += page_text + "\n"
+
+            return full_text
+
+    @staticmethod
+    def extract_form_fields(pdf_path):
+        reader = PdfReader(pdf_path)
+        fields = reader.Root.AcroForm.Fields
+
+        filled_fields = {}
+        unfilled_fields = {}
+
+        for field in fields:
+            field_name = field.T  # 获取字段名
+            field_value = field.V  # 获取字段值
+
+            if field_value is not None and str(field_value).strip():
+                filled_fields[field_name] = field_value
+            else:
+                unfilled_fields[field_name] = None
+
+        return filled_fields, unfilled_fields
+
+    @staticmethod
+    def list_form_fields(pdf_path):
+        # 打开PDF文件
+        with open(pdf_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+
+            # 获取表单字段
+            fields = reader.get_fields()
+        return fields
+
+    @staticmethod
+    def fill_pdf_form(pdf_path, output_path, data):
+        reader = PdfReader(pdf_path)
+        writer = PdfWriter()
+        reader.Root.AcroForm.update(pdfrw.PdfDict(NeedAppearances=pdfrw.PdfObject("true")))
+
+        # 遍历每一页并复制到writer对象中
+        for page in reader.pages:
+            writer.addpage(page)
+
+        # 更新表单字段
+        annotations = reader.Root.AcroForm.Fields
+        for annotation in annotations:
+            field_name = annotation.T
+            if field_name in data:
+                if data[field_name] is None:
+                    logger.debug(f"{field_name} is BLANK")
+                    continue
+                    # 检查是否是按钮类型
+                if '/Kids' in annotation and len(annotation['/Kids']) > 3:
+                    first_kid = annotation['/Kids'][0]
+                    # 设置第一个子元素的AS属性为"Yes"表示选中状态
+                    first_kid.update(
+                        pdfrw.PdfDict(AS=pdfrw.PdfName('Yes') if data[field_name] else pdfrw.PdfName('Off')))
+                    # 可以选择性地设置V（Value）属性
+                    first_kid.update(pdfrw.PdfDict(V=pdfrw.PdfName('Yes')))
+                elif '/FT' in annotation and annotation['/FT'] == '/Btn':
+                    # 对于按钮类型字段，设置布尔值或其他预定义值
+                    # 这里假设data[field_name]包含了适当的值，如True, False, 或者特定字符串
+                    if isinstance(data[field_name], bool):
+                        # 如果数据是布尔值，则直接赋值
+                        if "Yes" in str(annotation['/AP']):
+                            True_option = "Yes"
+                        elif "On" in str(annotation['/AP']):
+                            True_option = 'On'
+                        else:
+                            True_option = "Yes"
+
+                        if "Off" in str(annotation['/AP']):
+                            False_option = "Off"
+                        elif "No" in str(annotation['/AP']):
+                            False_option = 'No'
+                        else:
+                            False_option = "Off"
+                        annotation.update(
+                            pdfrw.PdfDict(
+                                AS=pdfrw.PdfName(True_option) if data[field_name] else pdfrw.PdfName(False_option)))
+                        annotation.update(pdfrw.PdfDict(
+                            V=pdfrw.PdfName(True_option) if data[field_name] else pdfrw.PdfName(False_option)))
+                    else:
+                        # 否则尝试使用提供的字符串值
+                        annotation.update(pdfrw.PdfDict(V=pdfrw.PdfName(data[field_name])))
+                        annotation.update(
+                            pdfrw.PdfDict(AS=pdfrw.PdfName(data[field_name])))
+
+                    logger.success(f"Filled {field_name}=>{data[field_name]}")
+                else:
+                    # 对于非按钮字段（例如文本字段或选择字段），您可以直接设置值
+                    logger.info(f"Starts to fill in {field_name}=>{data[field_name]}")
+                    annotation.update(pdfrw.PdfDict(V=data[field_name]))
+                    logger.success(f"Filled {field_name}=>{data[field_name]}")
+            else:
+                logger.error(f"Failed to fill {field_name}=>{data.get(field_name)}")
+        # 保存修改后的PDF
+        writer.write(output_path)
+
+    def unit_fill_document_template_step_1_overview(self, pdf_path: Path, batch_base: Path, pdf_analysis_path=None):
+        prompt_path = Path(__file__).parent.parent / 'prompts' / 'fill_document_step_1_overview.prompt'
+        with open(prompt_path, 'r') as f:
+            template_raw = f.read()
+
+        placeholders = self.list_form_fields(pdf_path)
+
+        placeholder_descriptions = []
+        placeholder_serializable = {}
+
+        placeholder_input_type_description = {'/Btn': 'Is a button, should fill in True/False bool value.',
+                                              '/Tx': 'Should fill in text',
+                                              '/Ch': 'Is a choice field, should fill in one of the available options. Use a string that matches one of the predefined choices'}
+
+        for placeholder in placeholders:
+            if placeholder not in placeholder_serializable:
+                placeholder_serializable[placeholder] = {}
+            if placeholders[placeholder].get('/FT') == '/Btn':
+                placeholder_serializable[placeholder].update({'explanation': 'Is a button.',
+                                                              'criteria': 'Fill in Bool value.'})
+            else:
+                placeholder_descriptions.append(
+                    f"{placeholder}: {placeholder_input_type_description.get(placeholders[placeholder].get('/FT'))} {placeholders[placeholder]}.")
+
+            placeholder_serializable[placeholder].update({
+                "PyPDF2_placeholder_description": f"{placeholder}: {placeholders[placeholder]}"})
+
+        pdf_content = self.extract_text_from_pdf(pdf_path, if_ignore_no_placeholder_pages=True)
+
+        parser = PydanticOutputParser(pydantic_object=PlaceholdersAnalysis)
+        model_instance = self.create_llm_instance()
+        fix_parser = OutputFixingParser.from_llm(parser=parser, llm=model_instance)
+        prompt = template_raw.format(personal_information_list=list(PersonGenerator().summary().keys()),
+                                     format_instruction=parser.get_format_instructions(),
+                                     input_text=pdf_content,
+                                     blanks_and_descriptions='\n'.join(placeholder_descriptions))
+
+        res = model_instance.invoke(prompt)
+        logger.info("Prompt sent. Waiting for res.")
+        answer = fix_parser.parse(res.content)
+        placeholder_analysis = answer.model_dump()['placeholders_analysis']
+        document_analysis = answer.model_dump()['document_analysis']
+        document_person_count = answer.model_dump()['document_person_count']
+        document_person_roles = answer.model_dump()['document_person_roles']
+
+        modified_person_roles_blanks_default = []
+        for role in document_person_roles:
+            modified_person_roles_blanks_default.append({'role': role})
+
+        placeholders_full = {'task_description': document_analysis,
+                             'placeholders': {},
+                             'document_person_count': document_person_count,
+                             'document_person_roles': modified_person_roles_blanks_default}
+        placeholders_full['placeholders'].update(placeholder_serializable)
+        for res in placeholder_analysis:
+            if res['placeholder_name'] in placeholder_serializable:
+                placeholders_full['placeholders'][res['placeholder_name']].update(res)
+        pdf_analysis_path = pdf_analysis_path if pdf_analysis_path else batch_base / f"{pdf_path.stem}_pdf_analysis.json"
+        with open(pdf_analysis_path, 'w') as f:
+            json.dump(placeholders_full, f, indent=4, ensure_ascii=False)
+        return placeholders_full
+
+    # def unit_fill_document_template_step_2(self, pdf_path: Path, target_placeholder, person_info,
+    #                                        batch_base: Path,
+    #                                        current_finished_placeholders=None, pdf_analysis_path=None):
+    #     prompt_path = Path(__file__).parent.parent / 'prompts' / 'fill_document_step_2_unit_fill.prompt'
+    #     pdf_analysis_path = pdf_analysis_path if pdf_analysis_path else batch_base / f"{pdf_path.stem}_pdf_analysis.json"
+    #     with open(prompt_path, 'r') as f:
+    #         template_raw = f.read()
+    #
+    #     parser = PydanticOutputParser(pydantic_object=UnitPlaceholderContent)
+    #     model_instance = self.create_llm_instance()
+    #     pdf_content = self.extract_text_from_pdf(pdf_path, if_ignore_no_placeholder_pages=True)
+    #     if pdf_analysis_path.exists():
+    #         with open(pdf_analysis_path, 'r') as f:
+    #             data = json.load(f)
+    #     else:
+    #         data = self.unit_fill_document_template_step_1_overview(pdf_path, batch_base, pdf_analysis_path=pdf_analysis_path)
+    #
+    #     if target_placeholder not in data['placeholders']:
+    #         logger.info(f"{target_placeholder} not in placeholders.")
+    #     logger.info(json.dumps(data, indent=4, ensure_ascii=False))
+    #
+    #     fix_parser = OutputFixingParser.from_llm(parser=parser, llm=model_instance)
+    #     prompt = template_raw.format(format_instruction=parser.get_format_instructions(),
+    #                                  task_description=data.get('task_description'),
+    #                                  input_text=pdf_content,
+    #                                  placeholder_description=json.dumps(data['placeholders'][target_placeholder],
+    #                                                                     indent=2,
+    #                                                                     ensure_ascii=False),
+    #                                  information=json.dumps(person_info, indent=2, ensure_ascii=False))
+    #     model_instance = self.create_llm_instance()
+    #     logger.debug(prompt)
+    #     res = model_instance.invoke(prompt)
+    #     logger.info(f"Prompt {pdf_path} sent. Waiting for res.")
+    #     answer = fix_parser.parse(res.content)
+    #     return answer.model_dump()
+
+    def group_fill_document_template_step_2(self, pdf_path: Path, task_analysis_dict):
+
+        prompt_path = Path(__file__).parent.parent / 'prompts' / 'fill_document_step_2_unit_fill.prompt'
+        with open(prompt_path, 'r') as f:
+            template_raw = f.read()
+        parser = PydanticOutputParser(pydantic_object=PlaceholderContents)
+        model_instance = self.create_llm_instance()
+        pdf_content = self.extract_text_from_pdf(pdf_path, if_ignore_no_placeholder_pages=True)
+
+        logger.info(json.dumps(task_analysis_dict, indent=4, ensure_ascii=False))
+
+        person_dicts = task_analysis_dict.get('document_person_roles', [{"role": 'applicant'}])
+        person = {}
+        role_list = []
+        for person_dict in person_dicts:
+            role = person_dict['role']
+            del person_dict['role']
+            while 1: # REFACTION NEEDED
+                try:
+                    p = PersonGenerator(**person_dict)
+                    break
+                except Exception as e:
+                    logger.warning(e)
+                    continue
+            person[role] = p
+            role_list.append(role)
+
+        # Fill in hard-code items:
+        todo_llm_fill_placeholders = []
+        rule_fill_placeholders = []
+        final_refract_placeholders = {}
+        for placeholder in task_analysis_dict['placeholders']:
+            specified_input_params = task_analysis_dict['placeholders'][placeholder].get('specified_input')
+            refract_requirements_params = task_analysis_dict['placeholders'][placeholder].get('refract')
+            if specified_input_params:
+                if 'from_person' in specified_input_params:
+                    cur_person = person[role_list[specified_input_params['from_person']['person']]]
+                    content = str(cur_person.summary().get(specified_input_params['from_person']['param']))
+                elif "fixed" in specified_input_params:
+                    content = specified_input_params["fixed"]
+                elif "random" in specified_input_params:
+                    content = random.choice(specified_input_params["random"])
+                elif "same" in specified_input_params:
+                    final_refract_placeholders.update({placeholder: specified_input_params})
+                    continue
+                else:
+                    content = "Unknown specified type."
+
+                if not refract_requirements_params:
+                    rule_fill_placeholders.append({
+                        "placeholder_name": placeholder,
+                        "content": content,
+                        "reason": json.dumps(specified_input_params, indent=2, ensure_ascii=False)
+                    })
+                else:
+                    todo_llm_fill_placeholders.append({
+                        "placeholder_name": placeholder,
+                        "raw_content": content,
+                        "format_modification_requirement": refract_requirements_params.get('prompt')
+                    })
+            else:
+                task = task_analysis_dict['placeholders'][placeholder]
+                task['placeholder_name'] = placeholder
+                todo_llm_fill_placeholders.append(task)
+
+        fix_parser = OutputFixingParser.from_llm(parser=parser, llm=model_instance)
+        prompt = template_raw.format(format_instruction=parser.get_format_instructions(),
+                                     task_description=task_analysis_dict.get('task_description'),
+                                     input_text=pdf_content,
+                                     placeholder_description=json.dumps(todo_llm_fill_placeholders,
+                                                                        indent=2,
+                                                                        ensure_ascii=False),
+                                     information=json.dumps({i: person[i].summary_serializable() for i in person},
+                                                            indent=2, ensure_ascii=False))
+        model_instance = self.create_llm_instance()
+        logger.debug(prompt)
+        res = model_instance.invoke(prompt)
+        logger.info(f"Prompt {pdf_path} sent. Waiting for res.")
+        answer = fix_parser.parse(res.content)
+        llm_determined_placeholders = answer.model_dump()["filled_contents"]
+        outs = llm_determined_placeholders + rule_fill_placeholders
+        final_refract_outs = []
+        for placeholder_name in final_refract_placeholders:
+            spec_dict = final_refract_placeholders[placeholder_name]
+            if "same" in spec_dict:
+                same_value_placeholder_name = spec_dict["same"]
+                same_value_placeholder_content = [i for i in outs if
+                                                  i['placeholder_name'] == same_value_placeholder_name]
+                if not same_value_placeholder_content:
+                    final_refract_outs.append({
+                        "placeholder_name": placeholder_name,
+                        "content": "NA",
+                        "format_modification_requirement": f"Failed to get value for {same_value_placeholder_name}"
+                    })
+                else:
+                    final_refract_outs.append({
+                        "placeholder_name": placeholder_name,
+                        "content": same_value_placeholder_content[0]['content'],
+                        "format_modification_requirement": f"Same value as {same_value_placeholder_name}"
+                    })
+        outs = final_refract_outs + outs
+        return outs, person_dicts
+
+    def generate_pdf_samples(self, pdf_path: Path, batch_base: Path,
+                             sample_regeneration_base: Union[Path, None] = None, template_only=False, pdf_analysis_path=None):
+        batch_base = batch_base / Path(pdf_analysis_path).parts[-2]
+        os.makedirs(batch_base, exist_ok=True)
+        pdf_analysis_path = pdf_analysis_path if pdf_analysis_path else batch_base / f"{pdf_path.stem}_pdf_analysis.json"
+        if pdf_analysis_path.exists():
+            with open(pdf_analysis_path, 'r') as f:
+                data = json.load(f)
+        else:
+            data = self.unit_fill_document_template_step_1_overview(pdf_path, batch_base)
+
+        if template_only:
+            return data
+
+        sample_base = batch_base / str(int(time.time() * 1000))
+        os.makedirs(sample_base, exist_ok=True)
+        pdf_res_json = Path(sample_base / f"{pdf_path.stem}_res.json")
+
+        if not sample_regeneration_base:
+            total_res, person_information = self.group_fill_document_template_step_2(pdf_path=pdf_path,
+                                                                                     task_analysis_dict=data)
+            with open(pdf_res_json, 'w') as f:
+                json.dump(total_res, f, indent=4, ensure_ascii=False)
+        else:
+            logger.info(f"Provided {sample_regeneration_base}")
+            pdf_res_json_paths = glob.glob(str(sample_regeneration_base / '*_res.json'))
+            if not pdf_res_json_paths:
+                logger.error("Sample generation res json missing. Cannot regenerate.")
+                return None
+            pdf_res_json = pdf_res_json_paths[0]
+            with open(pdf_res_json, 'r') as f:
+                total_res = json.load(f)
+
+        to_fill_dict = {}
+        for r in total_res:
+            new_key = r['placeholder_name'].replace(')', '\)').replace('(', '\(')
+            to_fill_dict[f"({new_key})"] = r['content']
+
+        self.fill_pdf_form(pdf_path, sample_base / str(pdf_path.stem + "_filled.pdf"), to_fill_dict)
+        return total_res
 
     @staticmethod
     def determine_input_type(input_body):
         if isinstance(input_body, Path) and input_body.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".bmp",
                                                                           ".tiff", ".webp"}:
             return 'IMAGE'
-        if re.search(r"\[\$\$(.*?)\$\$]", input_body):
-            return "TEMPLATE"
-        if re.search(r"\{\{(.*?)}}", input_body):
-            return "TEMPLATE"
-        return "SAMPLE"
+        if isinstance(input_body, Path) and input_body.suffix.lower() in {".html", '.htm'}:
+            return 'HTML'
+        if isinstance(input_body, Path) and input_body.suffix.lower() in {".txt"}:
+            with open(input_body, 'r') as f:
+                data = f.read()
+            if re.search(r"\[\$\$(.*?)\$\$]", data):
+                return "TEMPLATE"
+            if re.search(r"\{(.*?)}", data):
+                return "TEMPLATE"
+            return "SAMPLE"
+        return None
 
-    def generate_sample_by_template(self, template_body, sample_count=1):
+    def generate_sample_by_template(self, raw_template_path: Path, batch_dir: Path, sample_count=5,
+                                    template_only=False):
         """
         :param template_body:
         :param sample_count:
         :return: generated content
         """
-        seed_content = None
-        validation_res = self.validate_template(template_body)
+        sample_name = raw_template_path.stem
+        with open(raw_template_path, 'r') as f:
+            template_raw = f.read()
+        validation_res = self.validate_template(template_raw)
         if not validation_res is True:
             logger.error(f"[Validation] Failed. {validation_res}")
-            return seed_content, template_body, None
+            return
+        target_template_path = batch_dir / f'seed_{raw_template_path.stem}_template.txt'
+        shutil.copy(raw_template_path, target_template_path)
+        logger.warning(f"Moved from {raw_template_path}=>{target_template_path}")
+        if template_only:
+            logger.success(f"Template finished at: {target_template_path}")
+            return {'template_path': target_template_path,
+                    'pii_category': None,
+                    'batch_dir': batch_dir,
+                    'seed_input': raw_template_path,
+                    'seed_content': template_raw,
+                    'generated_samples': []}
 
-        def process_template():
+        def unit_fill_template(sample_store_name):
+            # Refine sample
             # Extract placeholders with optional underscores for multiple people
-            direct_placeholders = re.findall(r'\{(\w+?)(?:_(\d+))?}', template_body)
-            method_placeholders = re.findall(r'\[\$\$(.*?)\$\$]', template_body)
+            direct_placeholders = re.findall(r'\{(\w+?)(?:_(\d+))?}', template_raw)
+            method_placeholders = re.findall(r'\[\$\$(.*?)\$\$]', template_raw)
+            prompt_placeholders = re.findall('Person_(\d+)', template_raw)
 
             # Determine the number of distinct PersonGenerator instances needed
-            person_mapping = {}
-            for placeholder, index in direct_placeholders:
-                if index not in person_mapping:
-                    person_mapping[index] = PersonGenerator()
+            if direct_placeholders:
+                person_mapping = {}
+                for placeholder, index in direct_placeholders:
+                    if index not in person_mapping:
+                        person_mapping[index] = PersonGenerator()
+                person_mapping_serializable = {i: person_mapping[i].summary_serializable() for i in person_mapping}
+            else:
+                person_mapping = {}
+                for index in prompt_placeholders:
+                    if index not in person_mapping:
+                        person_mapping[index] = PersonGenerator()
+                person_mapping_serializable = {i: person_mapping[i].summary_serializable() for i in person_mapping}
 
             # Prepare mappings for direct placeholders
             sample_data = {}
@@ -177,6 +693,7 @@ class SampleGeneration:
                                                                                               placeholder)
 
             # Replace method placeholders with generated values
+            logger.debug(method_placeholders)
             for method in method_placeholders:
                 if method.startswith('int'):
                     match = re.match(r'int\((\d+),\s*(\d+)\)', method)
@@ -204,61 +721,196 @@ class SampleGeneration:
                         sample_data[method] = generator.generate(prompt)
 
             # Replace all placeholders in the template
-            filled_template = template_body
+            filled_template = template_raw
+            logger.debug(sample_data)
             for placeholder, value in sample_data.items():
                 filled_template = filled_template.replace(f'{{{placeholder}}}', str(value))
                 filled_template = filled_template.replace(f'[$${placeholder}$$]', str(value))
 
-            logger.success(f"Processed template:\n {filled_template}")
-
-            # Refine sample
-            content, reason = self.fill_template_by_llm(filled_template, person_mapping)
-            logger.success(f"Content Generated: \n{content}")
-            return content
+            logger.debug(filled_template)
+            method_placeholders = re.findall(r'\[\$\$(.*?)\$\$]', filled_template)
+            if method_placeholders:
+                logger.debug(f"Still have method placeholders {method_placeholders}")
+                # logger.success(f"Processed template:\n {filled_template}")
+                try:
+                    generated_content, reason = self.fill_template_by_llm(filled_template, person_mapping)
+                except:
+                    return {}
+            else:
+                generated_content = filled_template
+            logger.success(f"Content Generated: \n{generated_content}")
+            filled_content = self.extract_filled_content(template=template_raw, generated_content=generated_content)
+            filled_content_path = batch_dir / f'{sample_store_name}_placeholder_map.json'
+            person_mapping_path = batch_dir / f'{sample_store_name}_person_map.json'
+            generated_content_path = batch_dir / f"{sample_store_name}_content.txt"
+            with open(filled_content_path, 'w') as f:
+                json.dump(filled_content, f, ensure_ascii=False, indent=2)
+            with open(person_mapping_path, 'w') as f:
+                json.dump(person_mapping_serializable, f, ensure_ascii=False, indent=2)
+            with open(generated_content_path, 'w') as f:
+                f.write(generated_content)
+            sample_details = {"placeholder_content_map": filled_content_path,
+                              "person_mapping": person_mapping_path,
+                              'sample_content': generated_content_path}
+            logger.success(self.convert_paths_to_strings(sample_details))
+            return sample_details
 
         # 并发执行 sample_count 次
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = list(executor.map(lambda _: process_template(), range(sample_count)))
+            generated_samples = list(
+                executor.map(lambda idx: unit_fill_template(f"{sample_name}_{str(int(time.time() * 1000))}"),
+                             range(sample_count)))
 
-        return seed_content, template_body, results
+        batch_details = {'template_path': raw_template_path,
+                         'pii_category': None,
+                         'batch_dir': batch_dir,
+                         'seed_input': raw_template_path,
+                         'seed_content': template_raw,
+                         'generated_samples': generated_samples}
+        return batch_details
 
-    # Deprecated
-    def generate_sample_by_sample(self, sample_text):
-        prompt_path = Path(__file__).parent.parent / 'prompts' / 'sample_to_sample.prompt'
-        person = PersonGenerator()
-        my_info_string = person.summary_text()
-        my_info_dict = person.summary()
+    def unit_generate_sample_by_sample_totally_random(self, raw_content):
+        prompt_path = Path(__file__).parent.parent / 'prompts' / 'random_enrich_data.prompt'
+        person_mapping_part = []
+        person_mapping = {str(i): PersonGenerator() for i in range(1)}
+        for person_id in person_mapping:
+            person_notation = "Person_0" if person_id == '' else f"person_{person_id}"
+            person_info = person_mapping[person_id].summary()
+            person_mapping_part.append(
+                f"{person_notation}'s name is: {person_info['FullName']}: \n{person_notation}'s Infos:{str(person_info)}")
+        person_mapping_string = '\n'.join(person_mapping_part)
+
         with open(prompt_path, 'r', encoding='utf-8') as f:
             template = f.read()
 
-        parser = PydanticOutputParser(pydantic_object=SynthesizedSample)
+        prompt = template.format(person_mapping_string=person_mapping_string,
+                                 input_content=raw_content)
+
         model_instance = self.create_llm_instance()
 
-        prompt = template.format(format_instruction=parser.get_format_instructions(),
-                                 real_sample_content=sample_text,
-                                 my_info_string=my_info_string)
         res_content = model_instance.invoke(prompt)
-        answer = parser.parse(res_content.content)
-        logger.success(answer.synthesized_body)
-        return answer.synthesized_body, answer.used_piis, my_info_dict
+        return res_content.content
 
-    def generate_sample_by_sample_p_extraction(self, sample_text):
-        pii_extracted = self.pii_extractor.main(pii_category='general', input_str=sample_text, votes=5)
-        template, instance_count, pii_label_to_pii_content_mapping = self.sample_to_template(sample_text,
-                                                                                             extracted_piis=pii_extracted)
-        logger.info(f"Generated template is: \n{template}")
+    def generate_sample_by_sample_totally_random(self, raw_content, sample_count=5):
+        samples = []
+        with ThreadPoolExecutor(max_workers=sample_count) as executor:
+            futures = [executor.submit(self.unit_generate_sample_by_sample_totally_random, raw_content)
+                       for _ in range(sample_count)]
+
+            for future in tqdm.tqdm(as_completed(futures), total=len(futures), desc="Generating samples"):
+                try:
+                    sample = future.result()
+                    samples.append(sample)
+                except Exception as e:
+                    logger.error(f"Generated an exception: {e}")
+
+        return samples
+
+    # # Deprecated
+    # def generate_sample_by_sample(self, sample_text):
+    #     prompt_path = Path(__file__).parent.parent / 'prompts' / 'sample_to_sample.prompt'
+    #     person = PersonGenerator()
+    #     my_info_string = person.summary_text()
+    #     my_info_dict = person.summary()
+    #     with open(prompt_path, 'r', encoding='utf-8') as f:
+    #         template = f.read()
+    #
+    #     parser = PydanticOutputParser(pydantic_object=SynthesizedSample)
+    #     model_instance = self.create_llm_instance()
+    #
+    #     prompt = template.format(format_instruction=parser.get_format_instructions(),
+    #                              real_sample_content=sample_text,
+    #                              my_info_string=my_info_string)
+    #     res_content = model_instance.invoke(prompt)
+    #     answer = parser.parse(res_content.content)
+    #     logger.success(answer.synthesized_body)
+    #     return answer.synthesized_body, answer.used_piis, my_info_dict
+
+    def generate_sample_by_sample(self, pii_category, sample_path: Path, batch_dir: Path, sample_count=5,
+                                  template_only=False):
+        sample_name = sample_path.stem
+        with open(sample_path, 'r') as f:
+            text_all = f.read()
+        for k in self.sensitive_mapping:
+            text_all = text_all.replace(k, self.sensitive_mapping[k])
+        # Check template
+        template_path = batch_dir / f'{sample_name}_template.txt'
+        template_elements_path = batch_dir / f'{sample_name}_template_details.json'
+        if template_path.exists() and template_elements_path.exists():
+            logger.warning("Template exists. Will not generate template.")
+            with open(template_path, 'r') as f:
+                template = f.read()
+            with open(template_elements_path, 'r') as f:
+                elements_details = json.load(f)
+            instance_count = elements_details.get('instance_count')
+            # pii_label_to_pii_content_mapping = elements_details.get("pii_label_to_pii_content_mapping")
+        else:
+            pii_extracted = self.pii_extractor.main(pii_category=pii_category, input_str=text_all, votes=5)
+            logger.info(f"Prev content: \n{text_all}")
+            try:
+                template, instance_count, pii_label_to_pii_content_mapping = self.sample_to_template(text_all,
+                                                                                                     extracted_piis=pii_extracted)
+                logger.info(f"Generated template is: \n{template}")
+                with open(template_path, 'w') as f:
+                    f.write(template)
+                with open(template_elements_path, 'w') as f:
+                    json.dump({"instance_count": instance_count,
+                               "pii_label_to_pii_content_mapping": pii_label_to_pii_content_mapping}, f, indent=2,
+                              ensure_ascii=False)
+            except Exception as e:
+                logger.error(f"Failed to sample2template. \n{e}")
+                return
+        if template_only:
+            logger.success(f"Template finished at: {template_path}")
+            return {'template_path': template_path,
+                    'pii_category': pii_category,
+                    'batch_dir': batch_dir,
+                    'seed_input': sample_path,
+                    'seed_content': text_all,
+                    'generated_samples': []}
+        generated_samples = []
+        for i in range(sample_count):
+            sample_details = self.generate_sample_by_sample_p_extraction(
+                sample_store_name=f"{sample_name}_{str(int(time.time()))}",
+                template=template,
+                instance_count=instance_count,
+                sample_base_dir=batch_dir)
+            generated_samples.append(sample_details)
+
+        batch_details = {'template_path': template_path,
+                         'pii_category': pii_category,
+                         'batch_dir': batch_dir,
+                         'seed_input': sample_path,
+                         'seed_content': text_all,
+                         'generated_samples': generated_samples}
+        return batch_details
+
+    def generate_sample_by_sample_p_extraction(self, sample_store_name, template, instance_count,
+                                               sample_base_dir: Path):
         # Refine sample
         person_mapping = {str(i): PersonGenerator() for i in range(instance_count)}
-        content, reason = self.fill_template_by_llm(template, person_mapping)
-        logger.success(f"Content Generated: \n{content}")
-        logger.success(f"\nComments: {reason}")
-        # Extract filled items
-        # mapping = self.extract_filled_content(sample_text, pii_label_to_pii_content_mapping, content)
-        # logger.success(f"Filled content: {json.dumps(mapping, indent=2, ensure_ascii=False)}")
-        # return content, mapping, reason
-        return sample_text, template, content
-        # sample, used_piis, my_info_dict = self.generate_sample_by_template(template_body=template)
-        # return sample, used_piis, my_info_dict
+        person_mapping_store = {i: person_mapping[i].summary_serializable() for i in person_mapping.keys()}
+        try:
+            generated_content, _ = self.fill_template_by_llm(template, person_mapping)
+        except:
+            return {}
+
+        logger.success(f"Content Generated: \n{generated_content}")
+        filled_contents = self.extract_filled_content(template, generated_content)
+        filled_content_path = sample_base_dir / f'{sample_store_name}_placeholder_map.json'
+        person_mapping_path = sample_base_dir / f'{sample_store_name}_person_map.json'
+        generated_content_path = sample_base_dir / f"{sample_store_name}_content.txt"
+        with open(filled_content_path, 'w') as f:
+            json.dump(filled_contents, f, ensure_ascii=False, indent=2)
+        with open(person_mapping_path, 'w') as f:
+            json.dump(person_mapping_store, f, ensure_ascii=False, indent=2)
+        with open(generated_content_path, 'w') as f:
+            f.write(generated_content)
+        # logger.success(f"\nComments: {reason}")
+        sample_details = {"placeholder_content_map": filled_content_path,
+                          "person_mapping": person_mapping_path,
+                          'sample_content': generated_content_path}
+        return sample_details
 
     # @staticmethod
     # def util_align_generated_content_with_seed_content(seed_content, generated_content):
@@ -290,96 +942,321 @@ class SampleGeneration:
     #
     #     return aligned_seed, aligned_generated
 
-    def generate_sample_by_html_p_extraction(self, sample_text, storage_name=None):
-        if storage_name is None:
-            storage_name = str(int(time.time() * 1000))
-        logger.info(f"Name: {storage_name}")
-        if (Path(__file__).parent / 'ecommerce_outs' / f'{storage_name}.html').exists():
-            logger.success(f"{storage_name} Already finished.")
-            return
-        # 使用BeautifulSoup解析HTML内容
+    def generate_sample_by_html_p_extraction(self, pii_category, html_path: Path, batch_dir: Path, sample_count=5,
+                                             template_only=False):
+        with open(html_path, 'r') as f:
+            sample_text = f.read()
+        sample_text = sample_text.replace('Ipsum', 'Maison')
+        sample_text = sample_text.replace('Lorem', 'Johnson')
+        sample_text = sample_text.replace('loremipsum', 'elonsmith')
+        sample_text = sample_text.replace('lorem ipsum', 'Elon Parker')
+        sample_text = sample_text.replace('00000-', '10032-')
+        sample_text = sample_text.replace('00000', '10032')
+        sample_text = sample_text.replace("Fl 2", 'Floor 2')
+        sample_text = sample_text.replace("MailCharts", 'Shore')
+        sample_text = sample_text.replace("Mailcharts", 'Shore')
+        for k in self.sensitive_mapping:
+            sample_text = sample_text.replace(k, self.sensitive_mapping[k])
+        logger.info(f"PROCESSING: {html_path}")
         soup = BeautifulSoup(sample_text, 'lxml')
-
-        # 提取所有文本节点，排除纯空白或仅包含空白字符的文本
-        texts = [element.get_text(strip=True) for element in soup.find_all(text=True) if element.get_text(strip=True)]
-        if not texts:
-            logger.error(f"Template {storage_name} has no text")
-            return
-        text_all = '\n'.join(texts)
-        pii_extracted = self.pii_extractor.main(pii_category='ecommerce', input_str=text_all, votes=5)
-        try:
-            template, instance_count, pii_label_to_pii_content_mapping = self.sample_to_template(text_all,
-                                                                                                 extracted_piis=pii_extracted)
-            logger.info(f"Generated template is: \n{template}")
-
-        except Exception as e:
-            logger.error(f"Failed to sample2template. \n{e}")
-            return
-        # Refine sample
-        person_mapping = {str(i): PersonGenerator() for i in range(instance_count)}
-        person_mapping_store = {i: person_mapping[i].summary_serializable() for i in person_mapping.keys()}
-        line_mapping = {}
-        generated_content = None
-        retry_notice = []
-        for attempt in range(5):
-            try:
-                content, reason = self.fill_template_by_llm(template, person_mapping, truncated_version=2,
-                                                            retry_notice=retry_notice)
-            except Exception as e:
-                logger.error(f"Failed to fill by LLM: {e}")
-                retry_notice.append(str(e))
-                continue
-            content = re.sub(r"\n+", "\n", content)
-            logger.info(f"Content Generated: \n{content}")
-            logger.info(f"\nComments: {reason}")
+        batch_status_paths = glob.glob(str(batch_dir / "batch_status*"))
+        text_all = None
+        if batch_status_paths:
+            for batch_status_path in batch_status_paths:
+                with open(batch_status_path, 'r') as f:
+                    data = json.load(f)
+                    if data.get('seed_content'):
+                        text_all = data.get('seed_content')
+                        break
+        if not text_all:
+            # 提取所有文本节点，排除纯空白或仅包含空白字符的文本
+            texts = [element.get_text(strip=True) for element in soup.find_all(text=True) if
+                     element.get_text(strip=True)]
+            text_all = '\n'.join(texts)
             text_all = re.sub(r"\n+", "\n", text_all)
-            logger.info(f"Prev content: \n{text_all}")
-            if len(list(text_all.split('\n'))) != len(list(content.split('\n'))):
-                len_text_all = len(list(text_all.split('\n')))
-                len_content = len(list(content.split('\n')))
-                # if abs(len_text_all - len_content) >= len_content*0.2:
-                logger.warning(
-                    f"Generated content line count doesnt match {len_text_all} != {len_content} . Generate again.")
-                continue
-            for idx, line in enumerate(list(text_all.split('\n'))):
-                if line == content.split('\n')[idx]:
-                    continue
-                line_mapping[line] = content.split('\n')[idx]
-            generated_content = content
-            break
-        if generated_content:
-            logger.success(f"Content Generated: \n{generated_content}")
-            html_sample = sample_text
-            for line in line_mapping:
-                # html_sample = re.sub(line, line_mapping[line], html_sample)
-                html_sample = html_sample.replace(line, line_mapping[line])
-            filled_contents = self.extract_filled_content(template, generated_content)
-            os.makedirs(Path(__file__).parent / 'ecommerce_outs', exist_ok=True)
-            with open(Path(__file__).parent / 'ecommerce_outs' / f'{storage_name}_filled.json', 'w') as f:
-                json.dump(filled_contents, f, ensure_ascii=False, indent=2)
-            with open(Path(__file__).parent / 'ecommerce_outs' / f'{storage_name}.html', 'w') as f:
-                f.write(html_sample)
-            with open(Path(__file__).parent / 'ecommerce_outs' / f'{storage_name}.json', 'w') as f:
-                json.dump(person_mapping_store, f, ensure_ascii=False, indent=2)
-
-            logger.success(f"Sample stored at {Path(__file__).parent / 'ecommerce_outs' / f'{storage_name}.html'}")
+        sample_name = html_path.stem
+        source_file_path = batch_dir / ("seed_" + str(html_path.stem) + '_input' + html_path.suffix)
+        shutil.copy(html_path, source_file_path)
+        # Check template
+        template_path = batch_dir / f'seed_{sample_name}_template.txt'
+        template_elements_path = batch_dir / f'seed_{sample_name}_template_details.json'
+        if template_path.exists() and template_elements_path.exists():
+            logger.warning("Template exists. Will not generate template.")
+            with open(template_path, 'r') as f:
+                template = f.read()
+            with open(template_elements_path, 'r') as f:
+                elements_details = json.load(f)
+            instance_count = elements_details.get('instance_count')
+            # pii_label_to_pii_content_mapping = elements_details.get("pii_label_to_pii_content_mapping")
         else:
-            logger.error(f"Failed to generate: {storage_name}")
+            pii_extracted = self.pii_extractor.main(pii_category=pii_category, input_str=text_all, votes=5)
+            logger.info(f"Prev content: \n{text_all}")
+            try:
+                template, instance_count, pii_label_to_pii_content_mapping = self.sample_to_template(text_all,
+                                                                                                     extracted_piis=pii_extracted)
+                logger.info(f"Generated template is: \n{template}")
+                with open(template_path, 'w') as f:
+                    f.write(template)
+                with open(template_elements_path, 'w') as f:
+                    json.dump({"instance_count": instance_count,
+                               "pii_label_to_pii_content_mapping": pii_label_to_pii_content_mapping}, f, indent=2,
+                              ensure_ascii=False)
+            except Exception as e:
+                logger.error(f"Failed to sample2template. \n{e}")
+                return
+        if template_only:
+            logger.success(f"Template finished at: {template_path}")
+            return {'template_path': template_path,
+                    'pii_category': pii_category,
+                    'batch_dir': batch_dir,
+                    'seed_input': html_path,
+                    'seed_content': text_all,
+                    'generated_samples': []}
+        generated_samples = []
+        # Refine sample
+        for sample_idx in range(sample_count):
+            name_part = str(int(time.time()))
+            person_mapping = {str(i): PersonGenerator() for i in range(instance_count)}
+            person_mapping_store = {i: person_mapping[i].summary_serializable() for i in person_mapping.keys()}
+            line_mapping = {}
+            generated_content = None
+            retry_notice = []
+            for attempt in range(5):
+                try:
+                    content, reason = self.fill_template_by_llm(template, person_mapping, truncated_version=2,
+                                                                retry_notice=retry_notice, debug=False)
+                except Exception as e:
+                    logger.debug(traceback.format_exc())
+                    logger.error(f'Failed to fill by LLM: {e}')
+                    retry_notice.append(str(e))
+                    continue
+                content = re.sub(r"\n+", "\n", content)
+                logger.info(f"\nComments: {reason}")
+                if len(list(text_all.split('\n'))) != len(list(content.split('\n'))):
+                    len_text_all = len(list(text_all.split('\n')))
+                    len_content = len(list(content.split('\n')))
+                    logger.warning(
+                        f"Generated content line count doesnt match {len_text_all} != {len_content} . Generate again.")
+                    continue
+                for idx, line in enumerate(list(text_all.split('\n'))):
+                    if line == content.split('\n')[idx]:
+                        continue
+                    line_mapping[line] = content.split('\n')[idx]
+                generated_content = content
+                break
+            if generated_content:
+                logger.success(f"Content Generated: \n{generated_content}")
+                html_sample = sample_text
+                later_lines = []
+                for line in line_mapping:
+                    if any([line in k and line != k for k in line_mapping]):
+                        logger.warning(f"{line} pushed to later_lines")
+                        later_lines.append(line)
+                        continue
+                    # html_sample = re.sub(line, line_mapping[line], html_sample)
+                    logger.debug(line)
+                    logger.debug(line_mapping[line])
+                    html_sample = html_sample.replace(line, line_mapping[line])
+                later_lines.sort(key=len, reverse=True)
+                for line in later_lines:
+                    logger.debug(line)
+                    logger.debug(line_mapping[line])
+                    html_sample = html_sample.replace(line, line_mapping[line])
 
-    def fill_template_by_llm(self, pre_text, person_mapping, truncated_version=0, retry_notice=None):
+                filled_contents = self.extract_filled_content(template, generated_content)
+                soup = BeautifulSoup(html_sample, 'lxml')
+                texts = [element.get_text(strip=True) for element in soup.find_all(text=True) if
+                         element.get_text(strip=True)]
+                generated_sample_content = '\n'.join(texts)
+                generated_sample_content = re.sub(r"\n+", "\n", generated_sample_content)
+                filled_content_path = batch_dir / f'{sample_name}_{name_part}_placeholder_map.json'
+                html_sample_path = batch_dir / f'{sample_name}_{name_part}.html'
+                person_mapping_path = batch_dir / f'{sample_name}_{name_part}_person_map.json'
+                generated_content_path = batch_dir / f"{sample_name}_{name_part}_content.txt"
+                with open(filled_content_path, 'w') as f:
+                    json.dump(filled_contents, f, ensure_ascii=False, indent=2)
+                with open(html_sample_path, 'w') as f:
+                    f.write(html_sample)
+                with open(person_mapping_path, 'w') as f:
+                    json.dump(person_mapping_store, f, ensure_ascii=False, indent=2)
+                with open(generated_content_path, 'w') as f:
+                    f.write(generated_sample_content)
+                generated_samples.append({"placeholder_content_map": filled_content_path,
+                                          "html_sample": html_sample_path,
+                                          "person_mapping": person_mapping_path,
+                                          'sample_content': generated_content_path})
+            else:
+                logger.error(f"Failed to generate: {sample_name}_{name_part}")
+        batch_details = {'template_path': template_path,
+                         'pii_category': pii_category,
+                         'batch_dir': batch_dir,
+                         'seed_input': html_path,
+                         'seed_content': text_all,
+                         'generated_samples': generated_samples}
+        return batch_details
+
+    def generate_sample_by_html_p_extraction_v2(self, pii_category, html_path: Path, batch_dir: Path, sample_count=5,
+                                                template_only=False):
+        with open(html_path, 'r') as f:
+            sample_text = f.read()
+        sample_text = sample_text.replace("MailCharts", 'Simon')
+        sample_text = sample_text.replace("Mailcharts", 'Simon')
+        for k in self.sensitive_mapping:
+            sample_text = sample_text.replace(k, self.sensitive_mapping[k])
+        logger.info(f"PROCESSING: {html_path}")
+        soup = BeautifulSoup(sample_text, 'lxml')
+        batch_status_paths = glob.glob(str(batch_dir / "batch_status*"))
+        text_all = None
+        if batch_status_paths:
+            for batch_status_path in batch_status_paths:
+                with open(batch_status_path, 'r') as f:
+                    data = json.load(f)
+                    if data.get('seed_content'):
+                        text_all = data.get('seed_content')
+                        break
+        if not text_all:
+            # 提取所有文本节点，排除纯空白或仅包含空白字符的文本
+            texts = [element.get_text(strip=True) for element in soup.find_all(text=True) if
+                     element.get_text(strip=True)]
+            text_all = '\n'.join(texts)
+            text_all = re.sub(r"\n+", "\n", text_all)
+        sample_name = html_path.stem
+        source_file_path = batch_dir / ("seed_" + str(html_path.stem) + '_input' + html_path.suffix)
+        shutil.copy(html_path, source_file_path)
+        # Check template
+        template_path = batch_dir / f'seed_{sample_name}_template.txt'
+        template_elements_path = batch_dir / f'seed_{sample_name}_template_details.json'
+        if template_path.exists() and template_elements_path.exists():
+            logger.warning("Template exists. Will not generate template.")
+            with open(template_path, 'r') as f:
+                template = f.read()
+            with open(template_elements_path, 'r') as f:
+                elements_details = json.load(f)
+            instance_count = elements_details.get('instance_count')
+            # pii_label_to_pii_content_mapping = elements_details.get("pii_label_to_pii_content_mapping")
+        else:
+            pii_extracted = self.pii_extractor.main(pii_category=pii_category, input_str=text_all, votes=5)
+            logger.info(f"Prev content: \n{text_all}")
+            try:
+                template, instance_count, pii_label_to_pii_content_mapping = self.sample_to_template(text_all,
+                                                                                                     extracted_piis=pii_extracted)
+                logger.info(f"Generated template is: \n{template}")
+                with open(template_path, 'w') as f:
+                    f.write(template)
+                with open(template_elements_path, 'w') as f:
+                    json.dump({"instance_count": instance_count,
+                               "pii_label_to_pii_content_mapping": pii_label_to_pii_content_mapping}, f, indent=2,
+                              ensure_ascii=False)
+            except Exception as e:
+                logger.error(f"Failed to sample2template. \n{e}")
+                return
+        if template_only:
+            logger.success(f"Template finished at: {template_path}")
+            return {'template_path': template_path,
+                    'pii_category': pii_category,
+                    'batch_dir': batch_dir,
+                    'seed_input': html_path,
+                    'seed_content': text_all,
+                    'generated_samples': []}
+        generated_samples = []
+        # Refine sample
+        for sample_idx in range(sample_count):
+            name_part = str(int(time.time()))
+            person_mapping = {str(i): PersonGenerator() for i in range(instance_count)}
+            person_mapping_store = {i: person_mapping[i].summary_serializable() for i in person_mapping.keys()}
+            line_mapping = {}
+            generated_content = None
+            retry_notice = []
+            for attempt in range(5):
+                try:
+                    content, reason = self.fill_template_by_llm(template, person_mapping, truncated_version=2,
+                                                                retry_notice=retry_notice, debug=False)
+                except Exception as e:
+                    logger.debug(traceback.format_exc())
+                    logger.error(f'Failed to fill by LLM: {e}')
+                    retry_notice.append(str(e))
+                    continue
+                content = re.sub(r"\n+", "\n", content)
+                logger.info(f"\nComments: {reason}")
+                if len(list(text_all.split('\n'))) != len(list(content.split('\n'))):
+                    len_text_all = len(list(text_all.split('\n')))
+                    len_content = len(list(content.split('\n')))
+                    logger.warning(
+                        f"Generated content line count doesnt match {len_text_all} != {len_content} . Generate again.")
+                    continue
+                for idx, line in enumerate(list(text_all.split('\n'))):
+                    if line == content.split('\n')[idx]:
+                        continue
+                    line_mapping[line] = content.split('\n')[idx]
+                generated_content = content
+                break
+            if generated_content:
+                logger.success(f"Content Generated: \n{generated_content}")
+                html_sample = sample_text
+                later_lines = []
+                for line in line_mapping:
+                    if any([line in k and line != k for k in line_mapping]):
+                        logger.warning(f"{line} pushed to later_lines")
+                        later_lines.append(line)
+                        continue
+                    # html_sample = re.sub(line, line_mapping[line], html_sample)
+                    logger.debug(line)
+                    logger.debug(line_mapping[line])
+                    html_sample = html_sample.replace(line, line_mapping[line])
+                later_lines.sort(key=len, reverse=True)
+                for line in later_lines:
+                    logger.debug(line)
+                    logger.debug(line_mapping[line])
+                    html_sample = html_sample.replace(line, line_mapping[line])
+
+                filled_contents = self.extract_filled_content(template, generated_content)
+                soup = BeautifulSoup(html_sample, 'lxml')
+                texts = [element.get_text(strip=True) for element in soup.find_all(text=True) if
+                         element.get_text(strip=True)]
+                generated_sample_content = '\n'.join(texts)
+                generated_sample_content = re.sub(r"\n+", "\n", generated_sample_content)
+                filled_content_path = batch_dir / f'{sample_name}_{name_part}_placeholder_map.json'
+                html_sample_path = batch_dir / f'{sample_name}_{name_part}.html'
+                person_mapping_path = batch_dir / f'{sample_name}_{name_part}_person_map.json'
+                generated_content_path = batch_dir / f"{sample_name}_{name_part}_content.txt"
+                with open(filled_content_path, 'w') as f:
+                    json.dump(filled_contents, f, ensure_ascii=False, indent=2)
+                with open(html_sample_path, 'w') as f:
+                    f.write(html_sample)
+                with open(person_mapping_path, 'w') as f:
+                    json.dump(person_mapping_store, f, ensure_ascii=False, indent=2)
+                with open(generated_content_path, 'w') as f:
+                    f.write(generated_sample_content)
+                generated_samples.append({"placeholder_content_map": filled_content_path,
+                                          "html_sample": html_sample_path,
+                                          "person_mapping": person_mapping_path,
+                                          'sample_content': generated_content_path})
+            else:
+                logger.error(f"Failed to generate: {sample_name}_{name_part}")
+        batch_details = {'template_path': template_path,
+                         'pii_category': pii_category,
+                         'batch_dir': batch_dir,
+                         'seed_input': html_path,
+                         'seed_content': text_all,
+                         'generated_samples': generated_samples}
+        return batch_details
+
+    def fill_template_by_llm(self, template_content, person_mapping, truncated_version=0, retry_notice=None,
+                             debug=True, dont_align=True):
         prompt_path = Path(__file__).parent.parent / 'prompts' / 'template_fill_by_LLM.prompt'
         person_mapping_part = ["Here are person and corresponding personal Information related to the context."]
         for person_id in person_mapping:
-            person_notation = "main_person" if person_id == '' else f"person_{person_id}"
+            person_notation = "Person_0" if person_id == '' else f"person_{person_id}"
             person_info = person_mapping[person_id].summary()
-            person_mapping_part.append(f"{person_notation} name is: {person_info['FullName']}: \n{str(person_info)}")
+            person_mapping_part.append(
+                f"{person_notation}'s name is: {person_info['FullName']}: \n{person_notation}'s Infos:{str(person_info)}")
         person_mapping_string = '\n'.join(person_mapping_part)
 
         with open(prompt_path, 'r', encoding='utf-8') as f:
             template = f.read()
 
         # Force truncated mode
-        if len(pre_text.split('\n')) >= 50:
+        if len(template_content.split('\n')) >= 50:
             logger.warning("Forced to use truncated version 2")
             truncated_version = 2
 
@@ -389,7 +1266,7 @@ class SampleGeneration:
             # Process pre_text
             start_line = 0
             end_line = 0
-            pre_text_lines = pre_text.split('\n')
+            pre_text_lines = template_content.split('\n')
             for idx, line in enumerate(pre_text_lines):
                 if re.search(r'\$\$(.*?)\$\$', line):
                     logger.info(f"Start line index = {idx}")
@@ -410,60 +1287,108 @@ class SampleGeneration:
                 start_append_parts = pre_text_lines[:start_line]
             logger.debug(f"Initial lines: {len(pre_text_lines)} => {len(pre_text_truncated)}")
         elif truncated_version == 2:
-            pre_text_lines = pre_text.split('\n')
+            pre_text_lines = template_content.split('\n')
             pre_text_truncated = []
             for line in pre_text_lines:
                 if re.search(r'\$\$(.*?)\$\$', line):
                     pre_text_truncated.append(line)
         else:
-            pre_text_truncated = pre_text.split('\n')
+            pre_text_truncated = template_content.split('\n')
 
-        parser = PydanticOutputParser(pydantic_object=RefineResult)
-        model_instance = self.create_llm_instance(temperature=0, model_name='zhipu_glm4_plus')
+        # parser = PydanticOutputParser(pydantic_object=RefineResult)
+        model_instance = self.create_llm_instance(temperature=0, model_name='Zhipu_glm4_flash')
         # model_instance = self.create_llm_instance(temperature=0)
-
-        prompt = template.format(format_instruction=parser.get_format_instructions(),
-                                 # pii_mappings=pii_mappings,
-                                 document_content='\n'.join(pre_text_truncated),
-                                 person_mapping_string=person_mapping_string,
+        # fix_parser = OutputFixingParser.from_llm(parser=parser, llm=model_instance)
+        todo_template_content = "\n".join(pre_text_truncated)
+        prompt = template.format(person_mapping_string=person_mapping_string,
+                                 document_content=todo_template_content,
                                  retry_notice_str='' if not retry_notice else "\n".join(
                                      ["- " + i for i in list(set(retry_notice))]))
-        # logger.debug(prompt)
+        if debug:
+            logger.debug(prompt)
         res_content = model_instance.invoke(prompt)
-        logger.warning(f"{res_content.model_dump_json()}")
-        answer = parser.parse(res_content.content)
-        logger.success(answer)
-        if re.search(r'\$\$(.*?)\$\$', answer.refined_context):
+        # logger.warning(f"{res_content.model_dump_json()}")
+        # answer = fix_parser.parse(res_content.content)
+        answer = res_content.content
+        if debug:
+            logger.debug(answer)
+        if re.search(r'\$\$(.*?)\$\$', answer):
             raise Exception("Not yet filled template. Template still have [$$<prompt>$$] placeholders.")
+        logger.success(f'PREV: {todo_template_content}')
+        if dont_align:
+            logger.success(answer)
+            total_todo_rows = []
+            refined_context_parts = []
+            for line in template_content.split('\n'):
+                if re.search(r'\$\$(.*?)\$\$', line):
+                    total_todo_rows.append(line)
+            line_mapping = {}
+            for line, g_line in zip(total_todo_rows, answer.split('\n')):
+                line_mapping[line] = g_line
+                if debug:
+                    logger.warning(f"Prev: {line}\nG_Line: {g_line}")
+            for line in template_content.split('\n'):
+                # if re.search(r'\$\$(.*?)\$\$', line):
+                #     refined_context_parts.append(to_refine_refined_context_parts[cur_todo_idx])
+                #     cur_todo_idx += 1
+                # else:
+                refined_context_parts.append(line_mapping.get(line, line))
+            return '\n'.join(refined_context_parts), None
+
         # Align outs
         if truncated_version == 1:
-            refined_context_parts = start_append_parts + answer.refined_context.split('\n') + end_append_parts
+            # refined_context_parts = start_append_parts + answer.refined_context_partsfined_context.split('\n') + end_append_parts
+            refined_context_parts = start_append_parts + answer.split('\n') + end_append_parts
         elif truncated_version == 2:
             refined_context_parts = []
-            to_refine_refined_context_parts = answer.refined_context.split('\n')
-            cur_todo_idx = 0
-            total_todo_count = 0
-            for line in pre_text.split('\n'):
+            # to_refine_refined_context_parts = [i for i in answer.refined_context.split('\n') if i]
+            to_refine_refined_context_parts = [i for i in answer.split('\n') if i]
+            total_todo_rows = []
+            for line in template_content.split('\n'):
                 if re.search(r'\$\$(.*?)\$\$', line):
-                    total_todo_count += 1
-            if total_todo_count != len(to_refine_refined_context_parts):
+                    total_todo_rows.append(line)
+            if len(total_todo_rows) != len(to_refine_refined_context_parts):
+                # todo_row_content = '\n'.join(total_todo_rows)
+                logger.debug(f"TODO_ROWS: \n{total_todo_rows}")
+                if debug:
+                    logger.debug('\n'.join([f'{idx}: {total_todo_rows[idx]}' for idx in range(len(total_todo_rows))]))
                 logger.error(f"Current Row counts: {len(to_refine_refined_context_parts)}")
-                raise Exception(
-                    f"There are {total_todo_count} lines(\\n) in seed content. Generated content should also have {total_todo_count} lines.")
-            for line in pre_text.split('\n'):
-                if re.search(r'\$\$(.*?)\$\$', line):
-                    refined_context_parts.append(to_refine_refined_context_parts[cur_todo_idx])
-                    cur_todo_idx += 1
+                logger.debug(f"GENERATED: \n{to_refine_refined_context_parts}")
+                if debug:
+                    logger.debug('\n'.join([f'{idx}: {to_refine_refined_context_parts[idx]}' for idx in
+                                            range(len(to_refine_refined_context_parts))]))
+                logger.error(f"TODO_ROWS counts: {len(total_todo_rows)}")
+                # if len(to_refine_refined_context_parts) > total_todo_count:
+                # logger.warning("Tried to align row")
+                # aligned_generated_content = self.align_generated_content(total_todo_rows,
+                #                                                          to_refine_refined_context_parts)
+                aligned_generated_content = False
+                if not aligned_generated_content:
+                    raise Exception(
+                        f"There are {len(total_todo_rows)} lines in seed content. Generated content should also have {len(total_todo_rows)} lines.")
                 else:
-                    refined_context_parts.append(line)
+                    to_refine_refined_context_parts = aligned_generated_content
+
+            line_mapping = {}
+            for line, g_line in zip(total_todo_rows, to_refine_refined_context_parts):
+                line_mapping[line] = g_line
+                if debug:
+                    logger.warning(f"Prev: {line}\nG_Line: {g_line}")
+            for line in template_content.split('\n'):
+                # if re.search(r'\$\$(.*?)\$\$', line):
+                #     refined_context_parts.append(to_refine_refined_context_parts[cur_todo_idx])
+                #     cur_todo_idx += 1
+                # else:
+                refined_context_parts.append(line_mapping.get(line, line))
         else:
-            refined_context_parts = answer.refined_context.split('\n')
-        return '\n'.join(refined_context_parts), answer.reason
+            # refined_context_parts = answer.refined_context.split('\n')
+            refined_context_parts = answer.split('\n')
+        return '\n'.join(refined_context_parts), None
 
     @staticmethod
     def extract_filled_content(template, generated_content):
-        template_lines = template.split('\n')
-        generated_content_lines = generated_content.split('\n')
+        template_lines = [i for i in template.split('\n') if i]
+        generated_content_lines = [i for i in generated_content.split('\n') if i]
         if len(template_lines) != len(generated_content_lines):
             logger.error(
                 f"Failed to extract filled content. Template Lines: {len(template_lines)}. Content Lines: {len(generated_content_lines)}")
@@ -474,20 +1399,64 @@ class SampleGeneration:
             method_placeholders = re.findall(r'(\[\$\$.*?\$\$\])', template_line)
             placeholders = direct_placeholders + method_placeholders
             if placeholders:
-                logger.info(f'Extracting: {placeholders}')
-                for placeholder in placeholders:
-                    try:
-                        search_res = re.search(template_line.replace(placeholder, '(.*)'), generated_line)
-                        if search_res:
-                            placeholder_res = search_res.group(1)
-                            placeholder_res_list.append({placeholder: placeholder_res})
-                            logger.success({placeholder: placeholder_res})
-                    except Exception as e:
-                        logger.error(e)
+                logger.info(f'Extracting: {placeholders} from {generated_line}. SEED: {template_line}')
+                regex = template_line
+                for idx, placeholder in enumerate(placeholders):
+                    regex = regex.replace(placeholder, f'REGEX_{idx}')
+                regex = re.escape(regex)
+                for idx, placeholder in enumerate(placeholders):
+                    if idx == len(placeholders) - 1:
+                        regex = regex.replace(f'REGEX_{idx}', '(.*)')
+                    else:
+                        regex = regex.replace(f'REGEX_{idx}', '(.*?)')
+                search_res = re.search(regex, generated_line)
+                logger.debug(f"Try {regex} on \n {generated_line}")
+                if search_res:
+                    for idx, placeholder in enumerate(placeholders):
+                        placeholder_res = search_res.group(idx + 1)
+                        placeholder_res_list.append({placeholder: placeholder_res})
+                        logger.success({placeholder: placeholder_res})
+
         return placeholder_res_list
 
+    def align_generated_content(self, seed_content, current_generated_content):
+        prompt_path = Path(__file__).parent.parent / 'prompts' / 'match_generated_content_with_template.prompt'
 
-    def main(self, input_body, batch_dir=None, sample_count=1):
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            template = f.read()
+
+        parser = PydanticOutputParser(pydantic_object=AlignedGeneratedContent)
+        model_instance = self.create_llm_instance()
+        fix_parser = OutputFixingParser.from_llm(parser=parser, llm=model_instance)
+
+        prompt = template.format(format_instruction=parser.get_format_instructions(),
+                                 seed_content=seed_content,
+                                 generated_content=current_generated_content)
+        res_content = model_instance.invoke(prompt)
+        answer = fix_parser.parse(res_content.content)
+        if len(answer.aligned_generated_content) == len([i for i in seed_content if i]):
+            if any([re.search(r'\$\$(.*?)\$\$', i) for i in answer.aligned_generated_content]):
+                logger.error("Aligned content contains Unfilled content.")
+                return None
+            logger.success(answer.aligned_generated_content)
+            return '\n'.join(answer.aligned_generated_content)
+        else:
+            logger.error(f"Alignment failed. Modified: {len(answer.aligned_generated_content)}.")
+            logger.debug(f"NOW: \n{answer.aligned_generated_content}")
+            logger.debug(f"SEED: \n{[i for i in seed_content if i]}")
+            return None
+
+    def convert_paths_to_strings(self, d):
+        if isinstance(d, dict):
+            return {k: self.convert_paths_to_strings(v) for k, v in d.items()}
+        elif isinstance(d, list):
+            return [self.convert_paths_to_strings(element) for element in d]
+        elif isinstance(d, Path):
+            return str(d)
+        else:
+            return d
+
+    def main(self, pii_category, input_body, batch_dir=None, sample_count=1, template_only=False):
         if not batch_dir:
             batch_dir = Path(__file__).parent / 'output' / str(time.time() * 1000000)
         if isinstance(batch_dir, str):
@@ -495,38 +1464,87 @@ class SampleGeneration:
         logger.info(f"STARTS TO GENERATE SAMPLE AT {batch_dir}")
         input_type = self.determine_input_type(input_body)
         logger.info(f"Input body is {input_type}")
+        if input_body is None:
+            logger.error(f"Failed to process sample: {input_body}. UNKNOWN TYPE OF INPUT")
 
         if input_type == "TEMPLATE":
             # content, mapping, reason = self.generate_sample_by_template(input_body)
-            seed_document, template_body, synthetic_content = self.generate_sample_by_template(input_body,
-                                                                                               sample_count=sample_count)
+            batch_details = self.generate_sample_by_template(input_body,
+                                                             batch_dir=batch_dir,
+                                                             sample_count=sample_count,
+                                                             template_only=template_only)
             # return content, mapping, reason
-            return seed_document, template_body, synthetic_content
         elif input_type == "SAMPLE":
             # pre_text, placeholder_maps, person_mapping = self.generate_sample_by_sample_p_extraction(input_body)
-            seed_document, template_body, synthetic_content = self.generate_sample_by_sample_p_extraction(input_body)
+            batch_details = self.generate_sample_by_sample(pii_category=pii_category,
+                                                           sample_path=input_body,
+                                                           batch_dir=batch_dir,
+                                                           sample_count=sample_count,
+                                                           template_only=template_only)
             # return pre_text, {}, None
-            return seed_document, template_body, synthetic_content
 
         elif input_type == "IMAGE":
             # pre_text, placeholder_maps, person_mapping = self.generate_sample_by_image(input_body, batch_dir)
-            seed_document, template_body, synthetic_content = self.generate_sample_by_image(input_body, batch_dir)
+            batch_details = self.generate_sample_by_image(pii_category=pii_category,
+                                                          image_path=input_body,
+                                                          batch_dir=batch_dir,
+                                                          sample_count=sample_count,
+                                                          template_only=template_only)
             # return pre_text, {}, None
-            return seed_document, template_body, synthetic_content
-
+        elif input_type == "HTML":
+            batch_details = self.generate_sample_by_html_p_extraction(
+                pii_category=pii_category,
+                html_path=input_body,
+                batch_dir=batch_dir,
+                sample_count=sample_count,
+                template_only=template_only)
         else:
             logger.error(f"Input type {input_type} not supported")
-            return None, None, None
+            return None
+
+        return self.convert_paths_to_strings(batch_details)
+
+    def retry_batch(self, batch_dir: Path, sample_count, template_only):
+
+        task_status_json = batch_dir / 'batch_status.json'
+        if not task_status_json.exists():
+            logger.error(f"Batch status not exist. {batch_dir.name} failed to retry")
+        with open(task_status_json, 'r') as f:
+            data = json.load(f)
+        input_body = data.get('seed_input')
+        if not input_body:
+            potential_seed_input = glob.glob(str(batch_dir / 'seed*input.*'))
+            if not potential_seed_input:
+                logger.error("Cannot find input_body")
+                return
+            input_body = potential_seed_input[0]
+        input_body = Path(input_body)
+        if not input_body.exists():
+            logger.error("Cannot find input_body")
+            return
+        pii_category = data.get('pii_category', 'ecommerce_v0')
+        logger.warning(f"Will retry: {batch_dir} with PII_CATEGORY: {pii_category}")
+        res = self.main(pii_category=pii_category,
+                        input_body=input_body,
+                        batch_dir=batch_dir,
+                        sample_count=sample_count,
+                        template_only=template_only)
+        logger.success(json.dumps(res, indent=2, ensure_ascii=False))
+        return res
+
+    def check_pdf_blanks(self, pdf_path):
+        blanks = self.extract_form_fields(pdf_path)
 
 
-def process_file(file):
-    with open(file, 'r') as f:
-        data = f.read()
-    st = time.time()
-    ins = SampleGeneration()
-    ins.generate_sample_by_html_p_extraction(data, Path(file).stem)
-    elapsed_time = time.time() - st
-    return file, elapsed_time  # 返回文件名和耗时，方便后续记录或统计
+# def process_file(file):
+#     with open(file, 'r') as f:
+#         data = f.read()
+#     st = time.time()
+#     ins = SampleGeneration()
+#     ins.generate_sample_by_html_p_extraction(data, Path(file).stem + "_001")
+#     elapsed_time = time.time() - st
+#     return file, elapsed_time  # 返回文件名和耗时，方便后续记录或统计
+
 
 if __name__ == "__main__":
     # SAMPLE_TEMPLATE = """CERTIFICATE OF NATURALIZATION
@@ -690,26 +1708,92 @@ Check one:
     #     img_path = Path(r"/Users/anthonyf/projects/grainedAI/dataset_downloader/scripts/pdfpro/storage/dior-receipt-template.png")
     #     remake_sample = ins.main(SAMPLE_TEMPLATE, sample_count=2)
     #     print(remake_sample)
-    files = glob.glob(
-        "/Users/anthonyf/projects/grainedAI/dataset_downloader/scripts/mailcharts/storage/order_confirmation/*")
-    # for file in tqdm.tqdm(files):
-    #     with open(file, 'r') as f:
-    #         data = f.read()
-    #     st = time.time()
-    #     ins.generate_sample_by_html_p_extraction(data, Path(file).stem)
-    #     logger.success(f"Used {time.time() - st} seconds.")
+    # files = glob.glob(
+    #     "/Users/anthonyf/projects/grainedAI/dataset_downloader/scripts/mailcharts/storage/order_confirmation/*")
+    # # for file in tqdm.tqdm(files):
+    # #     with open(file, 'r') as f:
+    # #         data = f.read()
+    # #     st = time.time()
+    # #     ins.generate_sample_by_html_p_extraction(data, Path(file).stem)
+    # #     logger.success(f"Used {time.time() - st} seconds.")
+    #
+    # # 创建进程池，根据你的CPU核心数决定同时运行的进程数量
+    # num_processes = multiprocessing.cpu_count()  # 或者指定一个具体的数值
+    # pool = multiprocessing.Pool(processes=num_processes)
+    #
+    # # 使用map方法并行处理所有文件，并收集结果
+    # results = list(tqdm.tqdm(pool.imap_unordered(process_file, files), total=len(files)))
+    #
+    # # 关闭进程池，等待所有进程完成
+    # pool.close()
+    # pool.join()
+    #
+    # # 如果你想记录每个文件的处理时间，可以在这里遍历results
+    # for file, elapsed_time in results:
+    #     logger.success(f"Processing {file} used {elapsed_time} seconds.")
+    ### REGENERATE TEMPLATE
+    # template_base = Path('/Users/anthonyf/projects/grainedAI/PII_dataset_pipeline/output/job_1/b0632199-1691-c176-7cee-61cf21e98c45')
+    # template_path = glob.glob(str(template_base/'seed*template.txt'))[0]
+    # template_detail_path = glob.glob(str(template_base/'*template_details*'))[0]
+    # with open(template_path, 'r') as f:
+    #     template = f.read()
+    # with open(template_detail_path, 'r') as f:
+    #     details = json.load(f)
+    # instance_count = details.get("instance_count")
+    # person_mapping = {str(i): PersonGenerator() for i in range(instance_count)}
+    # ins = SampleGeneration()
+    # ins.fill_template_by_llm(template_content=template,
+    #                          person_mapping=person_mapping,
+    #                          truncated_version=2,
+    #                          debug=True)
+    #### RETRY BATCH:
+    # template_base = Path(
+    #     '/output/ecommerce_v0/36991a25-9b63-3d68-05da-4e7737cfc249')
+    # ins = SampleGeneration()
+    # ins.retry_batch(template_base,
+    #                 sample_count=1,
+    #                 template_only=True)
+    #### Gen PDF
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds10.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds6563.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds7669.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds64_pdf.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds5542.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds7781.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds7795.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds5108.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds5112.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds5111_h.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds5154.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds5155.pdf")
+    # legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds7677.pdf")
+    legal_doc = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds7675.pdf")
 
-    # 创建进程池，根据你的CPU核心数决定同时运行的进程数量
-    num_processes = multiprocessing.cpu_count()  # 或者指定一个具体的数值
-    pool = multiprocessing.Pool(processes=num_processes)
+    ins = SampleGeneration()
+    # ins.generate_pdf_samples(legal_doc, batch_base=Path(
+    #     '/Users/anthonyf/projects/grainedAI/PII_dataset_pipeline/output/legal_samples'),
+    #                          template_only=True)
+    # ins.check_pdf_blanks(legal_doc)
+    for _ in tqdm.tqdm(range(9)):
+        res = ins.generate_pdf_samples(legal_doc, batch_base=Path(
+            '/Users/anthonyf/projects/grainedAI/PII_dataset_pipeline/output/legal_samples'))
 
-    # 使用map方法并行处理所有文件，并收集结果
-    results = list(tqdm.tqdm(pool.imap_unordered(process_file, files), total=len(files)))
-
-    # 关闭进程池，等待所有进程完成
-    pool.close()
-    pool.join()
-
-    # 如果你想记录每个文件的处理时间，可以在这里遍历results
-    for file, elapsed_time in results:
-        logger.success(f"Processing {file} used {elapsed_time} seconds.")
+    # ins = SampleGeneration()
+    # pdf = Path('/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/ds10.pdf')
+    # ins.fill_pdf_form(pdf, pdf.parent / str(pdf.stem + "_debug.pdf"), {'(Drivers License)': True})
+    #### Gen Template
+    # out_base = Path("/Users/anthonyf/projects/grainedAI/PII_dataset_pipeline/output/legal_samples")
+    # template_path_base = Path("/Users/anthonyf/Desktop/GrainedAI/Datasets/PII/Legal/templates")
+    # template_paths = glob.glob(str(template_path_base/"*.txt"))
+    # for template_path in tqdm.tqdm(template_paths):
+    #     try:
+    #         template_path = Path(template_path)
+    #         batch_dir = out_base/template_path.stem
+    #         os.makedirs(batch_dir, exist_ok=True)
+    #         ins = SampleGeneration()
+    #         ins.generate_sample_by_template(raw_template_path=template_path,
+    #                                         batch_dir=batch_dir,
+    #                                         sample_count=10,
+    #                                         template_only=False)
+    #     except:
+    #         logger.error(template_path)

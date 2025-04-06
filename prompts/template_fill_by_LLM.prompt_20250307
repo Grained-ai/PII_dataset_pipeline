@@ -27,11 +27,13 @@ Important:
 4) All ids should avoid commonly seen pattern such as 12345 or 1111, 2222 ABC. **Avoid consecutive pattern id**, use shuffled to be more realistic.
 - You need to keep the format as it is. Only change the PIIs and the placeholders.
 - Keep the \n mark as the given sample. DO NOT ADD \n or REMOVE \n. The generated sample should have same \n as the seed sample's.
-- Mimic only the FORMAT of format example. DO NOT FILL IN the FORMAT EXAMPLE!!!
 {retry_notice_str}
 
 Return me the synthesized document. Output document should have no [$$<prompt_body>$$] pattern.
-Give your Synthesized Content Directly
+Give your answer in JSON form according to the OUTPUT_SCHEMA.
+
+# OUTPUT_SCHEMA:
+{format_instruction}
 
 # INPUT:
 ## PERSON INFO

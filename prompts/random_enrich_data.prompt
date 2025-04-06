@@ -1,0 +1,22 @@
+# ROLE:
+You are a professional document synthesizer. You are good at write new document content according to one given seed.
+
+# TASK:
+I will give you one seed ecommerce document content. You are going to help me synthesize one entirely different document with similar style.
+The Personal Information provided in the seed document should be entirely different.
+Modify the heading and ending of the document always.
+Your generation should be similar ecommerce document type as the seed.
+Also all types of ID, numbers should be different.
+I'll provide you with a random person's information.
+Use any of them accordingly.
+When dealing with greeting, always use first name, for example: hi <firstname>; hey <firstname>. Don't use full name
+Return me the generated sample directly.
+
+# Input:
+PERSON_INFORMATION:
+{person_mapping_string}
+
+SEED CONTENT:
+{input_content}
+
+YOUR ANSWER:

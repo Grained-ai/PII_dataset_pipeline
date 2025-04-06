@@ -31,3 +31,8 @@ class LLMFactory:
                 openai_api_key=config['LLM'][model_name]['llm_params']['api_key'],
                 openai_api_base=config['LLM'][model_name]['llm_params']['endpoint']
             )
+
+if __name__ == "__main__":
+    ins = LLMFactory()
+    a = ins.create_llm_instance()
+    print(a.predict("HI"))

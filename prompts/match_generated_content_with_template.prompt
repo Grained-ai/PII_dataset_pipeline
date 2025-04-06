@@ -1,0 +1,67 @@
+# TASK
+Your need to help me align the row contents from Generated Content with Seed Content.
+I will give you one example
+Finally we should make line count of Generated Content match with Seed Content.
+I will give you one pair of seed content and generated content.
+You need to help me align according to the example.
+Return me the generated content lines in JSON form according to the OUTPUT_SCHEMA.
+
+# EXAMPLE
+## Seed Content:
+, or feel free to reach out to us anytime at [$$Person_0's PhoneNumber. Format Example: 1-855-466-7467 $$].
+[$$Person_1's Date. Format Example: Feb 23-27 $$]
+[$$Person_0's Date. Format Example: Feb 20, 2018 $$]
+[$$Person_0's EmailAddress. Format Example: xxx@anyvolunteer.com $$]
+[$$Person_0's CreditCardNumber. Format Example: VISA xxxx xxxx xxxx 5607 $$]
+[$$Person_0's Street. Format Example: 175 Main St $$]
+[$$Person_0's City. Format Example: NEW YORK $$], [$$Person_0's State. Format Example: NY $$] [$$Person_0's ZipCode. Format Example: 00000 $$]
+[$$Person_0's FirstName. Format Example: John $$]
+[$$Person_0's Street. Format Example: 175 Main St $$]
+[$$Person_0's City. Format Example: NEW YORK $$], [$$Person_0's State. Format Example: NY $$] [$$Person_0's ZipCode. Format Example: 00000 $$]
+[$$Person_0's FirstName. Format Example: John $$]
+## Current Generated Content:
+, or feel free to reach out to us anytime at (552)377-8738.
+Jan 10-14
+Nov 5, 2022
+timothy.salazar@yahoo.com
+VISA xxxx xxxx xxxx 5607
+51776 Ryan Way
+Jasonberg
+Montana
+60971
+Timothy
+51776 Ryan Way
+Jasonberg
+Montana
+60971
+Timothy
+
+## Aligned Generated Content:
+, or feel free to reach out to us anytime at (552)377-8738.
+Jan 10-14
+Nov 5, 2022
+timothy.salazar@yahoo.com
+VISA xxxx xxxx xxxx 5607
+51776 Ryan Way
+Jasonberg, Montana 60971
+Timothy
+51776 Ryan Way
+Jasonberg, Montana 60971
+Timothy
+
+# TASK ANALYSIS
+In this example, i merged lines which should be one single line according to the seed content.
+If cannot find corresponding line, insert "". Make the final result length align with the Seed.
+
+
+# OUTPUT_SCHEMA:
+{format_instruction}
+
+# INPUT:
+## Seed Content:
+{seed_content}
+## Current Generated Content:
+{generated_content}
+
+YOUR ANSWER:
+

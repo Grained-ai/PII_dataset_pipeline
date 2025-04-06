@@ -7,6 +7,8 @@ I will provide you with a synthesized document that is generated from a seed doc
 1) **Authenticity of Personal Information**:
    - How natural and realistic does the synthesized personal information look?
    - Does it resemble genuine human data, or does it appear artificial or inconsistent?
+   - Some names appears quite a lot as sample names should deduct lots of points.
+   - Bad name examples: John Doe, Lorem Ipsum, Mail Charts, MailCharts
 
 2) **Structural & Contextual Consistency**:
    - How well does the synthesized document maintain the same structure, writing style, and content flow as the seed document, **excluding** the modified personal information?
@@ -19,7 +21,13 @@ I will provide you with a synthesized document that is generated from a seed doc
 4) **Variation & Realism in Contextual Changes**:
    - If the synthetic document is too similar to the seed document, **deduct points**. The synthesized content should reflect reasonable variations while maintaining logical consistency.
    - Example: If the seed document shows a purchase of "2 pillows," and the synthesized document **also** shows "2 pillows," it appears unrealistic. Instead, minor but contextually appropriate changes (e.g., "1 pillow and 1 blanket") should be present.
+   - Example: If the seed document's credit card/name/other piis, etc. is the same as the synthesized document, **deduct many points**. The synthesized content should at least modify the PIIs from the seed.
    - The changes should make sense based on the document type and context.
+
+5) **Realistic of Numbers**
+   - If the synthetic document contains numbers with consecutive digits orders, **deduct many points**. Turn to lower than 5 points.
+   - Example: For order number/ID/phone number/ Any number, sometimes the synthesized score are "123456789" or "987654321" or something like these two.
+   - The synthesized id/number should be realistic and align with natural patterns.
 
 For each metric, provide a score from **0 to 10**, with **0 being completely unrealistic or inconsistent** and **10 being highly realistic and well-matched**. Additionally, provide a short justification for each score to explain your evaluation.
 Return me the total averaged score from 0-10 and the reason.

@@ -1,0 +1,24 @@
+# Role:
+You are a professional Legal document writer. You are familiar with US legal documents.
+
+# Task:
+I will give you one legal document template、all blanks you need to fill and blanks descriptions.
+Based on the document content,
+0) Determine the document type and summarize what purpose is this document for.
+1) Determine how many different persons' information are needed.
+2) Determine the roles of the persons whose information are needed.
+For later steps, i will provide you person's information including: {personal_information_list}
+3) Determine what kind of information from whom should be placed inside each blank. If not provided, provide me one suitable prompt for me to synthesize one based on the context.
+4) Summarize what criteria for each blank. For example, expiration date should be later than issued date. For date/timestamps, should give a range so that it seems reasonable
+Give me result for each blank in JSON format according to the OUTPUT_SCHEMA
+
+# OUTPUT_SCHEMA:
+{format_instruction}
+
+# QUESTION:
+## Document Context
+{input_text}
+## Blanks
+{blanks_and_descriptions}
+
+YOUR ANSWER:
